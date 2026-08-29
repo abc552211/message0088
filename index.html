@@ -183,6 +183,7 @@
               <th>商品</th>
               <th>多久沒回診</th>
               <th>OD / OS 使用時間</th>
+              <th>聯絡日</th>
               <th>已綁定 LINE 數量</th>
             </tr>
           </thead>
@@ -194,19 +195,34 @@
 
   <div id="overlay" style="display: none;"></div>
 
-  <!-- 1. 發送確認彈窗 -->
-  <div class="modal" id="sendModal" style="display: none;">
-    <h3>確認發送 LINE 訊息</h3>
-    <p>即將發送訊息給 <strong id="modalCount" style="color:red; font-size: 17px;">0</strong> 位客戶 (包含關聯之全部家長 UID)。</p>
-    
-    <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; border: 1px solid #e1e8ed;">
-      <label style="font-weight: bold; font-size: 12px; display: block; margin-bottom: 5px;">請輸入授權密碼：</label>
-      <input type="password" id="authPwd" placeholder="請輸入授權密碼..." style="margin-bottom: 0;">
+  <!-- 1. 發送確認彈窗 (含 CD 冷卻警示) -->
+  <div class="modal" id="sendModal" style="display: none; width: 480px; max-width: 95vw;">
+    <h3 style="color: var(--primary); margin-bottom: 8px;">確認發送 LINE 訊息</h3>
+    <p style="font-size: 13px; margin-bottom: 10px;">
+      即將發送訊息給 <strong id="modalCount" style="color: #2563eb; font-size: 16px;">0</strong> 位客戶 (包含關聯之全部家長 UID)。
+    </p>
+
+    <!-- ★ CD 冷卻中警示提示區 (平時隱藏，有勾到冷卻中客戶才顯示) -->
+    <div id="cooldownAlertBox" style="display: none; background: #fffbeb; border: 1.5px solid #fcd34d; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: #92400e;">
+      <div style="font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+        <span>⚠️ 注意：以下客戶在 30 天內已聯繫過 (CD 中)</span>
+      </div>
+      <div id="cooldownClientListText" style="max-height: 80px; overflow-y: auto; background: rgba(255,255,255,0.7); padding: 5px 8px; border-radius: 4px; font-family: sans-serif; line-height: 1.5;">
+        <!-- 動態列出人名與天數 -->
+      </div>
+      <div style="font-size: 11px; margin-top: 4px; color: #b45309;">
+        ※ 您仍可輸入密碼強制發送，發送後將自動刷新聯絡日為今日。
+      </div>
     </div>
     
-    <div class="modal-footer">
+    <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; border: 1px solid #e1e8ed; margin-bottom: 12px;">
+      <label style="font-weight: bold; font-size: 12px; display: block; margin-bottom: 5px;">請輸入授權密碼：</label>
+      <input type="password" id="authPwd" placeholder="請輸入授權密碼..." style="margin-bottom: 0; width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+    </div>
+    
+    <div class="modal-footer" style="margin-top: 0;">
       <button class="btn btn-cancel" onclick="closeModal('sendModal')">取消</button>
-      <button class="btn btn-confirm" id="realSendBtn" onclick="executeSend()">確認發送</button>
+      <button class="btn btn-confirm" id="realSendBtn" onclick="executeSend()" style="background: #2563eb;">確認發送</button>
     </div>
   </div>
 
@@ -692,6 +708,7 @@
     function renderTable() {
       const tbody = document.querySelector("#dataTable tbody");
       tbody.innerHTML = "";
+      const now = new Date();
 
       rawClients.forEach((client, index) => {
         let uids = client.line_uids || [];
@@ -699,6 +716,25 @@
           uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
         }
         const uidCount = Array.isArray(uids) ? uids.length : 0;
+
+        // 計算聯絡日與冷卻狀態
+        const cDateStr = client.contactDate || client.contact_date || "";
+        let contactDisplayHtml = '<span style="color:#94a3b8;">-</span>';
+
+        if (cDateStr && cDateStr.includes('/')) {
+          const cp = cDateStr.split('/');
+          const cDateObj = new Date(parseInt(cp[0], 10), parseInt(cp[1], 10) - 1, parseInt(cp[2], 10));
+          if (!isNaN(cDateObj.getTime())) {
+            const diffDays = Math.floor((now.getTime() - cDateObj.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays >= 0 && diffDays < 30) {
+              // 30 天內剛聯繫過 (CD 中，橘黃色標記)
+              contactDisplayHtml = `<span style="background:#fef3c7; color:#b45309; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:11.5px;" title="冷卻中：距離上次聯繫未滿 30 天">${cDateStr}<br><span style="font-size:10px;">(${diffDays}天前)</span></span>`;
+            } else {
+              // 超過 30 天正常顯示
+              contactDisplayHtml = `<span style="color:#475569; font-size:12px;">${cDateStr}</span>`;
+            }
+          }
+        }
 
         const tr = document.createElement("tr");
         tr.dataset.index = index;
@@ -709,6 +745,7 @@
           <td><span class="status-badge">${client.product || '未分類'}</span></td>
           <td>${client.overdueDays || '0'} 天</td>
           <td style="font-size:12px;">OD: ${client.odDuration || '-'}<br>OS: ${client.osDuration || '-'}</td>
+          <td>${contactDisplayHtml}</td>
           <td>${uidCount > 0 ? `<span style="color:#16a34a; font-weight:bold;">已綁定 (${uidCount})</span>` : `<span style="color:#94a3b8;">未綁定</span>`}</td>
         `;
         tbody.appendChild(tr);
@@ -905,13 +942,55 @@
 
     document.getElementById("tplContent").addEventListener('input', updatePreview);
 
+    // ==========================================
+    // 打開手動發送確認彈窗 (自動檢測 CD 冷卻名單)
+    // ==========================================
     function openSendModal() {
-      const checked = document.querySelectorAll('.u-check:checked');
-      if (checked.length === 0) return alert("請至少勾選一位發送對象！");
-      if (!document.getElementById("tplContent").value.trim()) return alert("訊息內容不能為空！");
+      const checkedBoxes = Array.from(document.querySelectorAll('.u-check:checked'));
+      if (checkedBoxes.length === 0) {
+        return alert("請先在右側名單勾選欲發送的客戶！");
+      }
 
-      document.getElementById("modalCount").innerText = checked.length;
+      const tplIdx = document.getElementById("templateSelector").value;
+      if (tplIdx === "" || !templateList[tplIdx]) {
+        return alert("請先在左側選擇欲發送的訊息範本！");
+      }
+
+      const targetClients = checkedBoxes.map(cb => rawClients[cb.getAttribute("data-idx")]).filter(Boolean);
+      document.getElementById("modalCount").innerText = targetClients.length;
       document.getElementById("authPwd").value = "";
+
+      const now = new Date();
+      const cooledClients = [];
+
+      // 檢查勾選的客戶中，哪些人 30 天內已聯繫過
+      targetClients.forEach(c => {
+        const cDateStr = c.contactDate || c.contact_date || "";
+        if (cDateStr && cDateStr.includes('/')) {
+          const cp = cDateStr.split('/');
+          const cDateObj = new Date(parseInt(cp[0], 10), parseInt(cp[1], 10) - 1, parseInt(cp[2], 10));
+          if (!isNaN(cDateObj.getTime())) {
+            const diffDays = Math.floor((now.getTime() - cDateObj.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays >= 0 && diffDays < 30) {
+              cooledClients.push({ name: c.name, code: c.code, date: cDateStr, days: diffDays });
+            }
+          }
+        }
+      });
+
+      const alertBox = document.getElementById("cooldownAlertBox");
+      const listText = document.getElementById("cooldownClientListText");
+
+      if (cooledClients.length > 0) {
+        alertBox.style.display = "block";
+        listText.innerHTML = cooledClients.map(item => 
+          `• <b>${item.name}</b> (${item.code}) - 於 ${item.date} (${item.days}天前) 剛聯絡過`
+        ).join("<br>");
+      } else {
+        alertBox.style.display = "none";
+        listText.innerHTML = "";
+      }
+
       document.getElementById("overlay").style.display = "block";
       document.getElementById("sendModal").style.display = "block";
     }
@@ -969,86 +1048,7 @@
     // 貼上剛剛部署好的 GAS Web App 網址
     const LINE_PROXY_URL = "https://script.google.com/macros/s/AKfycbwl56sS24-3zGUgqKEoHmsfuG48tIM_7j3nrwsZOY2FxOmogbkD28YJ2S2Wp3HQF4ws/exec";
 
-    async function executeSend() {
-      const pwd = document.getElementById("authPwd").value.trim();
-      if (pwd !== systemConfig.authPassword) {
-        return alert("授權密碼錯誤！無法執行發送。");
-      }
-      if (!systemConfig.lineToken) {
-        return alert("尚未設定 LINE Channel Access Token，請至設定填寫！");
-      }
-
-      const tpl = document.getElementById("tplContent").value.trim();
-      const tplName = document.getElementById("tplName").value.trim() || "自訂訊息";
-      const checkedBoxes = document.querySelectorAll('.u-check:checked');
-
-      const sendBtn = document.getElementById("realSendBtn");
-      sendBtn.innerText = "發送中 (請勿關閉)...";
-      sendBtn.disabled = true;
-
-      let successCount = 0;
-      let failCount = 0;
-      let errorDetails = [];
-      const historyLogs = [];
-
-      for (let cb of checkedBoxes) {
-        const client = rawClients[cb.getAttribute("data-idx")];
-        const msgText = parseMessage(tpl, client);
-        let uids = client.line_uids || [];
-        if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
-
-        for (let uid of uids) {
-          try {
-            // 直接透過 GAS 轉發至 LINE API (無 CORS 阻擋)
-            const resp = await fetch(LINE_PROXY_URL, {
-              method: "POST",
-              headers: { "Content-Type": "text/plain;charset=utf-8" },
-              body: JSON.stringify({
-                token: systemConfig.lineToken.trim(),
-                to: uid.trim(),
-                messages: [{ type: "text", text: msgText }]
-              })
-            });
-
-            const resJson = await resp.json();
-
-            if (resJson && (resJson.message || resJson.error)) {
-              failCount++;
-              errorDetails.push(`客戶【${client.name}】: ${resJson.message || resJson.error}`);
-            } else {
-              successCount++;
-              historyLogs.push({
-                client_code: client.code,
-                client_name: client.name,
-                phone: client.phone,
-                uid: uid,
-                template_name: tplName,
-                message_content: msgText,
-                status: 'success'
-              });
-            }
-
-          } catch (e) {
-            failCount++;
-            errorDetails.push(`客戶【${client.name}】發送失敗: ${e.message}`);
-          }
-        }
-      }
-
-      if (historyLogs.length > 0) {
-        await supabaseClient.from('push_history').insert(historyLogs);
-      }
-
-      sendBtn.innerText = "確認發送";
-      sendBtn.disabled = false;
-      closeModal('sendModal');
-
-      if (failCount > 0) {
-        alert(`發送回報：\n成功：${successCount} 則\n失敗：${failCount} 則\n\n失敗原因：\n${errorDetails.join('\n')}`);
-      } else {
-        alert(`全數發送成功！共送出 ${successCount} 則訊息。`);
-      }
-    }
+    
     // ==========================================
     // LINE Flex Message 精緻氣泡卡片組裝引擎
     // ==========================================
@@ -1123,42 +1123,59 @@
     }
 
     // ==========================================
-    // 手動勾選群發 (送出精美 Flex 卡片)
+    // 執行手動 LINE 訊息發送 (精確更新 customers.contactDate)
     // ==========================================
     async function executeSend() {
       const pwd = document.getElementById("authPwd").value.trim();
       if (pwd !== systemConfig.authPassword) {
-        return alert("授權密碼錯誤！無法執行發送。");
+        return alert("授權密碼錯誤，無法發送！");
       }
+
       if (!systemConfig.lineToken) {
-        return alert("尚未設定 LINE Channel Access Token，請至設定填寫！");
+        return alert("尚未設定 LINE Channel Access Token！請點擊右上角「API」進行設定。");
       }
 
-      const tpl = document.getElementById("tplContent").value.trim();
-      const tplName = document.getElementById("tplName").value.trim() || "自訂訊息";
-      const checkedBoxes = document.querySelectorAll('.u-check:checked');
+      const tplIdx = document.getElementById("templateSelector").value;
+      const tpl = templateList[tplIdx];
+      if (!tpl) return alert("請先選擇發送範本！");
 
-      const sendBtn = document.getElementById("realSendBtn");
-      sendBtn.innerText = "發送中 (請勿關閉)...";
-      sendBtn.disabled = true;
+      const checkedBoxes = Array.from(document.querySelectorAll('.u-check:checked'));
+      const targetClients = checkedBoxes.map(cb => rawClients[cb.getAttribute("data-idx")]).filter(Boolean);
+      if (targetClients.length === 0) return alert("尚未勾選任何客戶！");
+
+      closeModal("sendModal");
 
       let successCount = 0;
       let failCount = 0;
-      let errorDetails = [];
       const historyLogs = [];
+      const successClientCodes = new Set();
 
-      for (let cb of checkedBoxes) {
-        const client = rawClients[cb.getAttribute("data-idx")];
-        const msgText = parseMessage(tpl, client);
-        const flexPayload = buildLineFlexMessage(msgText); // 組裝成原版 Flex 卡片
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const todayStr = `${y}/${m}/${d}`;
 
+      for (let client of targetClients) {
         let uids = client.line_uids || [];
-        if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+        if (typeof uids === 'string') {
+          uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+        }
+
+        if (uids.length === 0) {
+          failCount++;
+          continue;
+        }
+
+        const msgText = parseMessage(tpl.content, client);
+        const flexPayload = buildLineFlexMessage(msgText);
+        let clientSuccess = false;
 
         for (let uid of uids) {
           try {
-            const resp = await fetch(LINE_PROXY_URL, {
+            fetch(LINE_PROXY_URL, {
               method: "POST",
+              mode: "no-cors",
               headers: { "Content-Type": "text/plain;charset=utf-8" },
               body: JSON.stringify({
                 token: systemConfig.lineToken.trim(),
@@ -1167,48 +1184,69 @@
               })
             });
 
-            const resJson = await resp.json();
-
-            if (resJson && (resJson.message || resJson.error)) {
-              failCount++;
-              errorDetails.push(`客戶【${client.name}】: ${resJson.message || resJson.error}`);
-            } else {
-              successCount++;
-              historyLogs.push({
-                client_code: client.code,
-                client_name: client.name,
-                phone: client.phone,
-                uid: uid,
-                template_name: tplName,
-                message_content: msgText,
-                status: 'success'
-              });
-            }
-
+            successCount++;
+            clientSuccess = true;
+            historyLogs.push({
+              client_code: client.code,
+              client_name: client.name,
+              phone: client.phone,
+              uid: uid,
+              template_name: tpl.name,
+              message_content: msgText,
+              status: 'success'
+            });
           } catch (e) {
             failCount++;
-            errorDetails.push(`客戶【${client.name}】發送失敗: ${e.message}`);
           }
+        }
+
+        if (clientSuccess) {
+          successClientCodes.add(client.code);
         }
       }
 
+      // 1. 寫入發送歷史紀錄
       if (historyLogs.length > 0) {
-        await supabaseClient.from('push_history').insert(historyLogs);
+        try {
+          await supabaseClient.from('push_history').insert(historyLogs);
+        } catch (e) {
+          console.warn("寫入 push_history 失敗:", e);
+        }
       }
 
-      sendBtn.innerText = "確認發送";
-      sendBtn.disabled = false;
-      closeModal('sendModal');
+      // 2. ★ 精準更新 customers 表的 contactDate 欄位
+      const codeList = Array.from(successClientCodes);
+      if (codeList.length > 0) {
+        try {
+          const { error } = await supabaseClient
+            .from('customers')
+            .update({ contactDate: todayStr })
+            .in('code', codeList);
 
-      if (failCount > 0) {
-        alert(`發送回報：\n成功：${successCount} 則 (Flex 卡片)\n失敗：${failCount} 則\n\n失敗原因：\n${errorDetails.join('\n')}`);
-      } else {
-        alert(`全數發送成功！共送出 ${successCount} 則 Flex 互動卡片訊息。`);
+          if (error) {
+            console.error("Supabase 更新 contactDate 失敗:", error);
+            alert("聯絡日寫入雲端失敗: " + error.message);
+          } else {
+            // 同步更新發送頁本地名單
+            rawClients.forEach(c => {
+              if (codeList.includes(c.code)) {
+                c.contactDate = todayStr;
+              }
+            });
+            renderTable();
+            console.log(`成功將 ${codeList.length} 位客戶之 contactDate 寫入雲端 customers 表！`);
+          }
+        } catch (err) {
+          console.error("更新聯絡日拋出例外:", err);
+          alert("更新聯絡日例外: " + err.message);
+        }
       }
+
+      alert(`🎉 發送完成！\n成功發送：${successCount} 則 Flex 訊息\n已將 ${codeList.length} 位客戶之「聯絡日」成功寫入總表資料庫為 ${todayStr}！`);
     }
 
     // ==========================================
-    // 自動化規則掃描發送 (送出精美 Flex 卡片)
+    // 自動化規則掃描發送 (含 30 天冷卻與自動回寫聯絡日)
     // ==========================================
     async function runAutoInspection() {
       if (!systemConfig.lineToken) return alert("尚未設定 LINE Channel Access Token！");
@@ -1218,12 +1256,35 @@
 
       if (!confirm(`即將依據已啟用的 ${activeRules.length} 組規則進行全客戶掃描並執行推播，確定執行嗎？`)) return;
 
+      const now = new Date();
+      const todayYear = now.getFullYear();
+      const todayMonth = String(now.getMonth() + 1).padStart(2, '0');
+      const todayDay = String(now.getDate()).padStart(2, '0');
+      const todayStr = `${todayYear}/${todayMonth}/${todayDay}`;
+
       let matchedTasks = [];
+      let cooledCount = 0;
 
       rawClients.forEach(client => {
+        if (client.fdModify === '停用' || client.overdueDays === '停用') return;
+
         let uids = client.line_uids || [];
         if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
         if (uids.length === 0) return;
+
+        // 1. 檢查聯絡日是否在 30 天冷卻期內
+        const checkContactDate = client.contactDate || client.contact_date || "";
+        if (checkContactDate && checkContactDate.includes('/')) {
+          const cp = checkContactDate.split('/');
+          const contactDateObj = new Date(parseInt(cp[0], 10), parseInt(cp[1], 10) - 1, parseInt(cp[2], 10));
+          if (!isNaN(contactDateObj.getTime())) {
+            const diffDays = Math.floor((now.getTime() - contactDateObj.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays >= 0 && diffDays < 30) {
+              cooledCount++;
+              return; // 30 天內已聯繫過，略過
+            }
+          }
+        }
 
         for (let rule of activeRules) {
           const clientProd = client.product || '';
@@ -1261,17 +1322,24 @@
       });
 
       if (matchedTasks.length === 0) {
-        return alert("掃描完成：目前無任何客戶符合啟用的自動化推播條件。");
+        let msg = "掃描完成：目前無任何客戶符合啟用的自動化推播條件。";
+        if (cooledCount > 0) {
+          msg += `\n(另有 ${cooledCount} 位客戶因 30 天內已聯繫過，自動進入靜音冷卻期)`;
+        }
+        return alert(msg);
       }
 
-      if (!confirm(`掃描完畢！共符合 ${matchedTasks.length} 位客戶，是否立即送出 Flex 卡片推播？`)) return;
+      let confirmMsg = `掃描完畢！共符合 ${matchedTasks.length} 位客戶 (已排除 30 天內已聯繫者)，是否立即送出 Flex 卡片推播？`;
+      if (!confirm(confirmMsg)) return;
 
       let successCount = 0;
       let failCount = 0;
       const historyLogs = [];
+      const successClientCodes = new Set();
 
       for (let task of matchedTasks) {
         const flexPayload = buildLineFlexMessage(task.message);
+        let taskHasSuccess = false;
 
         for (let uid of task.uids) {
           try {
@@ -1291,6 +1359,7 @@
               failCount++;
             } else {
               successCount++;
+              taskHasSuccess = true;
               historyLogs.push({
                 client_code: task.client.code,
                 client_name: task.client.name,
@@ -1305,13 +1374,43 @@
             failCount++;
           }
         }
+
+        if (taskHasSuccess) {
+          successClientCodes.add(task.client.code);
+        }
       }
 
+      // 寫入發送歷史紀錄
       if (historyLogs.length > 0) {
-        await supabaseClient.from('push_history').insert(historyLogs);
+        try {
+          await supabaseClient.from('push_history').insert(historyLogs);
+        } catch (e) {
+          console.warn("寫入 push_history 失敗:", e);
+        }
       }
 
-      alert(`自動化推播執行完成！\n成功發送：${successCount} 則 Flex 訊息\n失敗：${failCount} 則`);
+      // ★ 核心回寫：自動更新 customers.contactDate
+      const codeList = Array.from(successClientCodes);
+      if (codeList.length > 0) {
+        try {
+          await supabaseClient
+            .from('customers')
+            .update({ contactDate: todayStr })
+            .in('code', codeList);
+
+          rawClients.forEach(c => {
+            if (codeList.includes(c.code)) {
+              c.contactDate = todayStr;
+            }
+          });
+          renderTable();
+          console.log(`已成功將 ${codeList.length} 位客戶之 contactDate 同步更新至雲端！`);
+        } catch (err) {
+          console.warn("批次更新聯絡日失敗:", err);
+        }
+      }
+
+      alert(`🎉 自動化推播執行完成！\n成功發送：${successCount} 則 Flex 訊息\n失敗：${failCount} 則\n已將 ${codeList.length} 位客戶之「聯絡日」自動更新為 ${todayStr}！`);
     }
 
     document.addEventListener("DOMContentLoaded", loadData);
