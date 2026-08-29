@@ -90,6 +90,43 @@
     .auto-pane { display: none; padding: 18px; flex: 1; overflow-y: auto; background: #fff; }
     .auto-pane.active { display: block; }
     .cond-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; background: #fdfdfd; padding: 10px; border-radius: 4px; border: 1px solid #eaeaea; }
+  
+    /* 自動化側邊欄 綠燈/灰燈 指示燈樣式 */
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+.status-dot.on {
+  background-color: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+.status-dot.off {
+  background-color: #94a3b8;
+  box-shadow: none;
+}
+/* 自動化側邊欄 綠燈/灰燈 指示燈樣式 */
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+.status-dot.on {
+  background-color: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+.status-dot.off {
+  background-color: #94a3b8;
+  box-shadow: none;
+}
   </style>
 </head>
 <body>
@@ -507,9 +544,6 @@
       }
     }
 
-    // ==========================================
-    // 自動化 10 組設定面板渲染與操作
-    // ==========================================
     function openAutoModal(isRefresh) {
       const sidebar = document.getElementById("autoTabsSidebar");
       const container = document.getElementById("autoPanesContainer");
@@ -530,7 +564,12 @@
 
       currentAutoConfigs.forEach((conf, i) => {
         const idx = i + 1;
-        sidebar.innerHTML += `<div class="auto-tab ${currentActiveTabIdx === idx ? 'active' : ''}" onclick="switchAutoTab(${idx})" id="tab_${idx}"><span id="tabIcon_${idx}">${conf.enabled ? '[開]' : '[關]'}</span> <span id="tabName_${idx}">${conf.name}</span></div>`;
+        // ★ 核心改動：將 [開]/[關] 改為指示燈 class
+        sidebar.innerHTML += `
+          <div class="auto-tab ${currentActiveTabIdx === idx ? 'active' : ''}" onclick="switchAutoTab(${idx})" id="tab_${idx}">
+            <span id="tabIcon_${idx}" class="status-dot ${conf.enabled ? 'on' : 'off'}"></span>
+            <span id="tabName_${idx}">${conf.name}</span>
+          </div>`;
 
         let condStrings = [];
         let cNoVisit = conf.condNoVisit || { active: false, op: ">=", days: "" };
@@ -621,12 +660,20 @@
       if (paneEl) paneEl.classList.add('active');
     }
 
-    function updateSidebarName(idx, val) {
-      const safeName = val || "設定" + idx;
-      const tabNameEl = document.getElementById("tabName_" + idx);
-      const overview = document.getElementById("overviewName_" + idx);
-      if (tabNameEl) tabNameEl.innerText = safeName;
-      if (overview) overview.innerText = safeName;
+    function updateSidebarIcon(idx, val, selectEl) {
+      const tabIconEl = document.getElementById("tabIcon_" + idx);
+      if (tabIconEl) {
+        if (val === "true") {
+          tabIconEl.className = "status-dot on";  // 變綠燈
+        } else {
+          tabIconEl.className = "status-dot off"; // 變灰燈
+        }
+      }
+      selectEl.style.color = val === "true" ? "#27ae60" : "#555";
+      const overviewTitle = document.getElementById("overviewName_" + idx);
+      if (overviewTitle) {
+        overviewTitle.style.color = val === "true" ? "#27ae60" : "#7f8c8d";
+      }
     }
 
     function updateSidebarIcon(idx, val, selectEl) {
