@@ -1,0 +1,1320 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINE 訊息推播與自動化管理系統</title>
+  <!-- Supabase JS SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --primary: #2c3e50;
+      --secondary: #34495e;
+      --accent: #3498db;
+      --success: #27ae60;
+      --warning: #f39c12;
+      --danger: #e74c3c;
+      --bg: #f4f6f9;
+      --card-bg: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background-color: var(--bg);
+      margin: 0;
+      padding: 0;
+      color: var(--primary);
+    }
+    .header {
+      background: var(--primary);
+      color: white;
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .header h2 { margin: 0; font-size: 18px; }
+    .btn {
+      padding: 7px 14px; border: none; border-radius: 4px; cursor: pointer;
+      font-weight: bold; transition: 0.2s; color: white; font-size: 13px;
+    }
+    .btn-refresh { background: var(--accent); }
+    .btn-save { background: var(--warning); width: 100%; margin-top: 8px; }
+    .btn-send { background: var(--success); width: 100%; padding: 12px; font-size: 15px; margin-top: 12px; }
+    .btn-blue { background: #6b8c9e; }
+    
+    .container {
+      display: flex; gap: 15px; padding: 15px; max-width: 1500px; margin: 0 auto; height: calc(100vh - 70px);
+    }
+    .panel-left { flex: 1; min-width: 360px; display: flex; flex-direction: column; gap: 12px; }
+    .panel-right { flex: 2; display: flex; flex-direction: column; background: var(--card-bg); border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow: hidden; }
+    
+    .card { background: var(--card-bg); padding: 16px; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    .card h3 { margin-top: 0; border-bottom: 2px solid var(--bg); padding-bottom: 8px; font-size: 15px; }
+    
+    select, input[type="text"], input[type="number"], input[type="password"], textarea {
+      width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; margin-bottom: 8px; font-family: inherit; font-size: 13px;
+    }
+    textarea { height: 150px; resize: vertical; }
+    
+    .table-container { flex: 1; overflow: auto; position: relative; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; position: sticky; top: 0; z-index: 10; font-weight: bold; color: var(--secondary); }
+    tr:hover { background-color: #f1f5f8; }
+    
+    .status-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11.5px; font-weight: bold;
+      background: #e8f8f5; color: #117a65;
+    }
+    
+    #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; z-index: 100; }
+    .modal {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: white; padding: 20px; border-radius: 8px; width: 440px; max-width: 90vw; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+      display: none; z-index: 101;
+    }
+    .modal h3 { margin-top: 0; color: var(--danger); font-size: 16px; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
+    .btn-cancel { background: #95a5a6; }
+    .btn-confirm { background: var(--danger); }
+    
+    #loader { display: flex; flex-direction: column; align-items: center; justify-content: center; position: absolute; inset: 0; background: rgba(255,255,255,0.9); z-index: 50; font-size: 16px; font-weight: bold; color: var(--primary); }
+
+    /* 自動化 10 組分頁樣式 */
+    .auto-sidebar { width: 150px; background: #f4f7f5; border-right: 1px solid #e1e8e2; overflow-y: auto; }
+    .auto-tab { padding: 12px 14px; font-size: 13.5px; color: #555; cursor: pointer; border-bottom: 1px solid #e1e8e2; font-weight: bold; }
+    .auto-tab:hover { background: #e9ecea; }
+    .auto-tab.active { background: #fff; color: #27ae60; border-left: 4px solid #27ae60; }
+    .auto-pane { display: none; padding: 18px; flex: 1; overflow-y: auto; background: #fff; }
+    .auto-pane.active { display: block; }
+    .cond-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; background: #fdfdfd; padding: 10px; border-radius: 4px; border: 1px solid #eaeaea; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+      <h2>LINE 訊息推播管理系統</h2>
+      <button class="btn btn-blue" onclick="openAutoModal()">自動化設定 <span id="autoBadge" style="background:#e74c3c; color:white; padding:1px 6px; border-radius:8px; font-size:11px;">未啟用</span></button>
+      <button class="btn" style="background: #27ae60;" onclick="runAutoInspection()">執行自動化檢查</button>
+      <button class="btn" style="background: #e67e22;" onclick="openHistoryModal()">發送紀錄查詢</button>
+      <button class="btn btn-secondary" style="background: #5c798a;" onclick="openSettingsModal()">API</button>
+      <button class="btn" style="background: #8e44ad;" onclick="openProductMappingModal()">商品名稱對外定義</button>
+    </div>
+    <button class="btn btn-refresh" onclick="loadData()">重新載入客戶資料</button>
+  </div>
+
+  <div class="container">
+    <div class="panel-left">
+      <div class="card">
+        <h3>1. 訊息範本管理</h3>
+        <label style="font-size: 12px; font-weight: bold;">選擇範本：</label>
+        <select id="templateSelector" onchange="changeTemplate()">
+          <option value="">-- 請選擇範本 --</option>
+        </select>
+        
+        <input type="text" id="tplName" placeholder="範本名稱 (例: 塑型片定期回診提醒)">
+        <textarea id="tplContent" placeholder="在此輸入訊息內容...&#10;可用變數：{姓名}, {品項}, {多久沒回}, {OD用多久}, {OS用多久}"></textarea>
+        
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-save" style="background:#8e44ad; margin-top:0;" onclick="addNewTemplate()">新增範本</button>
+          <button class="btn btn-save" style="margin-top:0;" onclick="saveCurrentTemplate()">儲存此範本</button>
+          <button class="btn btn-danger" style="margin-top:0; width:80px;" onclick="deleteCurrentTemplate()">刪除</button>
+        </div>
+      </div>
+
+      <div class="card" style="flex: 1;">
+        <h3>訊息即時預覽 (以首位勾選者為例)</h3>
+        <div id="previewBox" style="background:#ecf0f1; padding:12px; border-radius:4px; font-size:13px; white-space:pre-wrap; min-height: 100px; color:#555; max-height:180px; overflow-y:auto;">
+          請先勾選右側名單，並撰寫範本...
+        </div>
+        <button class="btn btn-send" onclick="openSendModal()">準備發送 (<span id="selectedCount">0</span> 人)</button>
+      </div>
+    </div>
+
+    <div class="panel-right">
+      <div style="padding: 12px; border-bottom: 1px solid #eee;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h3 style="margin:0;">2. 選擇發送對象與條件篩選</h3>
+          <input type="text" id="searchInput" placeholder="搜尋姓名、編號或電話..." onkeyup="filterTable()" style="width: 220px; margin:0; padding: 5px;">
+        </div>
+        
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; background: #f8f9fa; padding: 8px; border-radius: 4px; border: 1px solid #e1e8ed;">
+          <select id="filterProduct" onchange="filterTable()" style="flex: 1; min-width: 120px; margin: 0; padding: 5px;">
+            <option value="">-- 所有商品 --</option>
+          </select>
+
+          <div style="display: flex; align-items: center; gap: 4px; flex: 2; min-width: 200px;">
+            <span style="font-size: 12px; font-weight: bold; white-space: nowrap;">未回診天數:</span>
+            <input type="number" id="filterVisitMin" placeholder="最小" oninput="filterTable()" style="margin: 0; padding: 5px;">
+            <span>~</span>
+            <input type="number" id="filterVisitMax" placeholder="最大" oninput="filterTable()" style="margin: 0; padding: 5px;">
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 4px; flex: 2; min-width: 200px;">
+            <span style="font-size: 12px; font-weight: bold; white-space: nowrap;">使用天數:</span>
+            <input type="number" id="filterUsageMin" placeholder="最小" oninput="filterTable()" style="margin: 0; padding: 5px;">
+            <span>~</span>
+            <input type="number" id="filterUsageMax" placeholder="最大" oninput="filterTable()" style="margin: 0; padding: 5px;">
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 4px; flex: 1; min-width: 150px;">
+            <span style="font-size: 12px; font-weight: bold; white-space: nowrap;">LINE 狀態:</span>
+            <select id="filterLineStatus" onchange="filterTable()" style="margin: 0; padding: 5px;">
+              <option value="bound">僅顯示已綁定 LINE</option>
+              <option value="all">顯示全部名單</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <div class="table-container">
+        <div id="loader">
+          <span>讀取客戶與範本資料中...</span>
+        </div>
+        <table id="dataTable">
+          <thead>
+            <tr>
+              <th style="width: 35px;"><input type="checkbox" id="checkAll" onclick="toggleAll()"></th>
+              <th>編號 / 姓名</th>
+              <th>電話</th>
+              <th>商品</th>
+              <th>多久沒回診</th>
+              <th>OD / OS 使用時間</th>
+              <th>已綁定 LINE 數量</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay" style="display: none;"></div>
+
+  <!-- 1. 發送確認彈窗 -->
+  <div class="modal" id="sendModal" style="display: none;">
+    <h3>確認發送 LINE 訊息</h3>
+    <p>即將發送訊息給 <strong id="modalCount" style="color:red; font-size: 17px;">0</strong> 位客戶 (包含關聯之全部家長 UID)。</p>
+    
+    <div style="background: #f8f9fa; padding: 12px; border-radius: 4px; border: 1px solid #e1e8ed;">
+      <label style="font-weight: bold; font-size: 12px; display: block; margin-bottom: 5px;">請輸入授權密碼：</label>
+      <input type="password" id="authPwd" placeholder="請輸入授權密碼..." style="margin-bottom: 0;">
+    </div>
+    
+    <div class="modal-footer">
+      <button class="btn btn-cancel" onclick="closeModal('sendModal')">取消</button>
+      <button class="btn btn-confirm" id="realSendBtn" onclick="executeSend()">確認發送</button>
+    </div>
+  </div>
+
+  <!-- 2. 全自動回診提醒 (10組進階設定彈窗) -->
+  <div class="modal" id="autoModal" style="display: none; width: 820px; max-width: 95vw; padding: 0; overflow: hidden; flex-direction: column; max-height: 85vh; border-radius: 8px;">
+    <div style="padding: 12px 18px; background: #fff; border-bottom: 1px solid #eee; flex-shrink: 0;">
+      <h3 style="color: #2c3e50; margin: 0; font-size: 16px;">全自動回診提醒 (10 組進階設定)</h3>
+    </div>
+
+    <div style="display: flex; flex: 1; overflow: hidden; height: 50vh; min-height: 400px;">
+      <div class="auto-sidebar" id="autoTabsSidebar"></div>
+      <div id="autoPanesContainer" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>
+    </div>
+
+    <div class="modal-footer" style="padding: 12px 18px; border-top: 1px solid #eee; background: #f8f9fa; flex-shrink: 0; margin-top: 0;">
+      <button class="btn btn-cancel" onclick="closeAutoModal()">離開</button>
+      <button class="btn btn-refresh" style="background: #27ae60;" onclick="saveAutoSettings()" id="saveAutoBtn">儲存自動化設定</button>
+    </div>
+  </div>
+
+  <!-- 3. 系統權限與 Channel Access Token 設定彈窗 -->
+  <div class="modal" id="settingsModal" style="display: none; width: 520px;">
+    <h3 style="color: var(--primary);">LINE API 與授權設定</h3>
+    <div style="font-size: 12px; color: #666; margin-bottom: 10px;">設定將安全儲存於 Supabase system_settings 中</div>
+    
+    <label style="font-size: 12px; font-weight: bold;">LINE Channel Access Token (推播權杖)：</label>
+    <textarea id="settingLineToken" style="height: 90px; font-family: monospace; font-size: 11px;" placeholder="貼上 LINE Channel Access Token..."></textarea>
+    
+    <label style="font-size: 12px; font-weight: bold;">發送授權密碼：</label>
+    <input type="text" id="settingAuthPassword" placeholder="自訂授權密碼 (預設: 1234)">
+    
+    <div class="modal-footer">
+      <button class="btn btn-cancel" onclick="closeModal('settingsModal')">關閉</button>
+      <button class="btn btn-refresh" onclick="saveSystemConfig()">儲存設定</button>
+    </div>
+  </div>
+
+  <!-- 4. 發送歷史紀錄彈窗 -->
+  <div class="modal" id="historyModal" style="display: none; width: 750px; max-height: 80vh; flex-direction: column;">
+    <h3 style="color: var(--primary); margin-bottom: 10px;">LINE 推播歷史紀錄</h3>
+    <div class="table-container" style="max-height: 50vh; border: 1px solid #eee;">
+      <table style="font-size: 12px;">
+        <thead>
+          <tr>
+            <th>時間</th>
+            <th>客戶</th>
+            <th>電話</th>
+            <th>範本</th>
+            <th>內容摘要</th>
+            <th>狀態</th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-cancel" onclick="closeModal('historyModal')">關閉</button>
+    </div>
+  </div>
+
+  <!-- 5. 商品名稱對外定義彈窗 -->
+  <div class="modal" id="productMappingModal" style="display: none; width: 580px; max-width: 95vw; max-height: 85vh; flex-direction: column;">
+    <h3 style="color: var(--primary); margin-bottom: 6px;">商品對外顯示名稱定義</h3>
+    <div style="font-size: 12px; color: #64748b; margin-bottom: 12px;">
+      左側為資料庫內部代號（門市管理用），右側為傳給家長查看時顯示之正式名稱。
+    </div>
+
+    <div class="table-container" style="flex: 1; max-height: 50vh; border: 1px solid #e2e8f0; border-radius: 4px;">
+      <table style="font-size: 13px;">
+        <thead>
+          <tr>
+            <th style="width: 40%;">資料庫內部代號 (總表)</th>
+            <th style="width: 60%;">對外顯示名稱 (客人看)</th>
+          </tr>
+        </thead>
+        <tbody id="productMappingTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="modal-footer" style="margin-top: 15px;">
+      <button class="btn btn-cancel" onclick="closeModal('productMappingModal')">取消</button>
+      <button class="btn btn-refresh" style="background: #27ae60;" onclick="saveProductMapping()">儲存對照設定</button>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "https://wycoyydhcaeuabaelwdo.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5Y295eWRoY2FldWFiYWVsd2RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5MDk2MDUsImV4cCI6MjEwMzQ4NTYwNX0.fkTge9-CHTIIYhQOfMpEmkRM9vOleM6rGd-h4sYDzjw";
+    
+    let supabaseClient = null;
+    let rawClients = [];
+    let templateList = [];
+    let currentAutoConfigs = [];
+    let currentActiveTabIdx = 0;
+    let autoSettingsChanged = false;
+
+    let systemConfig = {
+      lineToken: "v6pO2cph5h0LxPSCzMQIvir9gWoWIAyKJ0DJf5/v8v+9kWV7tmH14bq5PTC0CYoVNfzCdj/c1AQJKgzSSin69JVRUQbVCb/FjfCo9u69uXviPrKHfYaQNzFbWx1q/3Q85+rxIXyKa8uD7tF/MabuQQdB04t89/1O/w1cDnyilFU=",
+      authPassword: "1234"
+    };
+
+    if (window.supabase && window.supabase.createClient) {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
+
+    // 初始化 10 組預設自動化配置
+    function getDefaultAutoConfigs() {
+      const arr = [];
+      for (let i = 1; i <= 10; i++) {
+        arr.push({
+          id: i,
+          enabled: false,
+          name: `設定 ${i}`,
+          items: [],
+          condNoVisit: { active: false, op: ">=", days: "" },
+          condUsageAny: { active: false, op: ">=", days: "" },
+          templateName: ""
+        });
+      }
+      return arr;
+    }
+
+    async function loadData() {
+      const loader = document.getElementById("loader");
+      loader.style.display = "flex";
+
+      try {
+        await loadProductMappingFromCloud();
+        await loadConfigFromCloud();
+        await loadTemplatesFromCloud();
+        await loadAutoConfigFromCloud();
+
+        const { data, error } = await supabaseClient
+          .from('customers')
+          .select('*');
+
+        if (!error && data) {
+          rawClients = data.filter(c => c.overdueDays !== '停用' && c.fdModify !== '停用');
+          populateProductFilter();
+          renderTable();
+        }
+      } catch (err) {
+        alert("資料載入失敗: " + err.message);
+      } finally {
+        loader.style.display = "none";
+      }
+    }
+
+    async function loadConfigFromCloud() {
+      try {
+        const { data } = await supabaseClient
+          .from('system_settings')
+          .select('data')
+          .eq('id', 'line_push_config')
+          .maybeSingle();
+
+        if (data && data.data) {
+          systemConfig = { ...systemConfig, ...data.data };
+        }
+      } catch (e) { }
+    }
+
+    async function saveSystemConfig() {
+      const token = document.getElementById('settingLineToken').value.trim();
+      const pwd = document.getElementById('settingAuthPassword').value.trim() || '1234';
+
+      systemConfig.lineToken = token;
+      systemConfig.authPassword = pwd;
+
+      try {
+        await supabaseClient
+          .from('system_settings')
+          .upsert({ id: 'line_push_config', data: systemConfig, updated_at: new Date().toISOString() });
+        alert("設定儲存成功！");
+        closeModal('settingsModal');
+      } catch (err) {
+        alert("儲存失敗: " + err.message);
+      }
+    }
+
+    async function loadTemplatesFromCloud() {
+      const { data, error } = await supabaseClient
+        .from('message_templates')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (!error && data) {
+        templateList = data;
+        renderTemplateSelector();
+      }
+    }
+
+    async function loadAutoConfigFromCloud() {
+      try {
+        const { data } = await supabaseClient
+          .from('system_settings')
+          .select('data')
+          .eq('id', 'auto_push_configs')
+          .maybeSingle();
+
+        if (data && data.data && Array.isArray(data.data)) {
+          currentAutoConfigs = data.data;
+        } else {
+          currentAutoConfigs = getDefaultAutoConfigs();
+        }
+
+        const badge = document.getElementById("autoBadge");
+        if (currentAutoConfigs.some(c => c.enabled)) {
+          badge.innerText = "運作中";
+          badge.style.background = "#27ae60";
+        } else {
+          badge.innerText = "未啟用";
+          badge.style.background = "#e74c3c";
+        }
+      } catch (e) {
+        currentAutoConfigs = getDefaultAutoConfigs();
+      }
+    }
+
+    function renderTemplateSelector() {
+      const sel = document.getElementById("templateSelector");
+      sel.innerHTML = '<option value="">-- 請選擇範本 --</option>';
+      templateList.forEach((t, idx) => {
+        sel.innerHTML += `<option value="${idx}">${t.name}</option>`;
+      });
+    }
+
+    function changeTemplate() {
+      const idx = document.getElementById("templateSelector").value;
+      if (idx !== "") {
+        document.getElementById("tplName").value = templateList[idx].name;
+        document.getElementById("tplContent").value = templateList[idx].content;
+      } else {
+        document.getElementById("tplName").value = "";
+        document.getElementById("tplContent").value = "";
+      }
+      updatePreview();
+    }
+
+    function addNewTemplate() {
+      const name = prompt("請輸入新範本名稱：");
+      if (name && name.trim()) {
+        templateList.push({ name: name.trim(), content: "" });
+        renderTemplateSelector();
+        document.getElementById("templateSelector").value = templateList.length - 1;
+        changeTemplate();
+      }
+    }
+
+    async function saveCurrentTemplate() {
+      const name = document.getElementById("tplName").value.trim();
+      const content = document.getElementById("tplContent").value.trim();
+      if (!name) return alert("請輸入範本名稱！");
+
+      try {
+        await supabaseClient
+          .from('message_templates')
+          .upsert({ name: name, content: content, updated_at: new Date().toISOString() }, { onConflict: 'name' });
+        alert("範本儲存成功！");
+        await loadTemplatesFromCloud();
+      } catch (err) {
+        alert("儲存失敗: " + err.message);
+      }
+    }
+
+    async function deleteCurrentTemplate() {
+      const name = document.getElementById("tplName").value.trim();
+      if (!name) return;
+      if (!confirm(`確定要刪除範本【${name}】嗎？`)) return;
+
+      try {
+        await supabaseClient
+          .from('message_templates')
+          .delete()
+          .eq('name', name);
+        alert("範本已刪除！");
+        document.getElementById("tplName").value = "";
+        document.getElementById("tplContent").value = "";
+        await loadTemplatesFromCloud();
+      } catch (err) {
+        alert("刪除失敗: " + err.message);
+      }
+    }
+
+    // ==========================================
+    // 自動化 10 組設定面板渲染與操作
+    // ==========================================
+    function openAutoModal(isRefresh) {
+      const sidebar = document.getElementById("autoTabsSidebar");
+      const container = document.getElementById("autoPanesContainer");
+
+      if (!isRefresh) {
+        currentActiveTabIdx = 0;
+        document.getElementById("overlay").style.display = "block";
+        document.getElementById("autoModal").style.display = "flex";
+      }
+
+      let tplOptions = '<option value="">-- 請選擇範本 --</option>';
+      templateList.forEach(t => { tplOptions += `<option value="${t.name}">${t.name}</option>`; });
+
+      sidebar.innerHTML = `<div class="auto-tab ${currentActiveTabIdx === 0 ? 'active' : ''}" onclick="switchAutoTab(0)" id="tab_0">總覽啟用</div>`;
+      
+      let overviewHtml = `<h4 style="margin-top:0; color:#2c3e50; border-bottom: 2px solid #27ae60; padding-bottom:5px;">狀態與內容總覽</h4>`;
+      let panesHtml = `<div id="pane_0" class="auto-pane ${currentActiveTabIdx === 0 ? 'active' : ''}"></div>`;
+
+      currentAutoConfigs.forEach((conf, i) => {
+        const idx = i + 1;
+        sidebar.innerHTML += `<div class="auto-tab ${currentActiveTabIdx === idx ? 'active' : ''}" onclick="switchAutoTab(${idx})" id="tab_${idx}"><span id="tabIcon_${idx}">${conf.enabled ? '[開]' : '[關]'}</span> <span id="tabName_${idx}">${conf.name}</span></div>`;
+
+        let condStrings = [];
+        let cNoVisit = conf.condNoVisit || { active: false, op: ">=", days: "" };
+        let cUsageAny = conf.condUsageAny || { active: false, op: ">=", days: "" };
+
+        if (cNoVisit.active && cNoVisit.days) condStrings.push(`未回診 ${cNoVisit.op} ${cNoVisit.days}天`);
+        if (cUsageAny.active && cUsageAny.days) condStrings.push(`任一眼使用 ${cUsageAny.op} ${cUsageAny.days}天`);
+        
+        let detailCond = condStrings.length > 0 ? condStrings.join(" 且 ") : "<span style='color:#c06c6c;'>未設定條件</span>";
+        let detailItems = conf.items && conf.items.length > 0 ? conf.items.join("、") : "<span style='color:#c06c6c;'>未勾選品項</span>";
+        let detailTpl = conf.templateName ? conf.templateName : "<span style='color:#c06c6c;'>未選擇範本</span>";
+
+        overviewHtml += `
+          <div style="padding: 10px; border-bottom: 1px dashed #eee; background: ${conf.enabled ? '#fafdfb' : '#fff'};">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong style="color: ${conf.enabled ? '#27ae60' : '#7f8c8d'}; font-size:14px;" id="overviewName_${idx}">${conf.name}</strong>
+              <select id="autoEnable_${i}" style="width: 90px; padding: 3px; font-weight:bold; color: ${conf.enabled ? '#27ae60' : '#555'};" onchange="updateSidebarIcon(${idx}, this.value, this); autoSettingsChanged = true;">
+                <option value="false" ${!conf.enabled ? "selected" : ""}>停用</option>
+                <option value="true" ${conf.enabled ? "selected" : ""}>啟用</option>
+              </select>
+            </div>
+            <div style="font-size:12px; color:#555; margin-top:4px; line-height:1.5; background: #fafbfc; border-left: 3px solid #e1e8e2; padding: 4px 8px;">
+              <b>適用品項：</b> ${detailItems} <br>
+              <b>觸發規則：</b> ${detailCond} <br>
+              <b>發送範本：</b> ${detailTpl}
+            </div>
+          </div>
+        `;
+
+        const isChecked = (val) => (conf.items && conf.items.includes(val)) ? "checked" : "";
+        const condRow = (key, label, obj) => `
+          <div class="cond-row">
+            <input type="checkbox" id="condActive_${key}_${i}" ${obj.active ? "checked" : ""} onchange="autoSettingsChanged = true;">
+            <label style="margin:0; width:120px; font-size:13px;">${label}</label>
+            <select id="condOp_${key}_${i}" style="width: 120px; margin:0; padding:4px;" onchange="autoSettingsChanged = true;">
+              <option value=">=" ${obj.op === ">=" ? "selected" : ""}>大於等於 (>=)</option>
+              <option value="==" ${obj.op === "==" ? "selected" : ""}>剛好等於 (==)</option>
+            </select>
+            <input type="number" id="condDays_${key}_${i}" value="${obj.days || ''}" placeholder="天數" style="width: 90px; margin:0; padding:4px;" oninput="autoSettingsChanged = true;">
+          </div>
+        `;
+
+        panesHtml += `
+          <div id="pane_${idx}" class="auto-pane ${currentActiveTabIdx === idx ? 'active' : ''}">
+            <div style="margin-bottom: 12px;">
+              <label style="font-weight:bold; font-size:12px;">設定名稱：</label>
+              <input type="text" id="autoName_${i}" value="${conf.name}" oninput="updateSidebarName(${idx}, this.value); autoSettingsChanged = true;">
+            </div>
+            <div style="margin-bottom: 12px;">
+              <label style="font-weight:bold; font-size:12px;">發送品項 (可複選)：</label>
+              <div style="display:flex; gap:15px; margin-top:6px; font-size:13px;">
+                <label><input type="checkbox" id="itemOk_${i}" ${isChecked("塑型片")} onchange="autoSettingsChanged = true;"> 塑型片</label>
+                <label><input type="checkbox" id="itemGlass_${i}" ${isChecked("離焦眼鏡")} onchange="autoSettingsChanged = true;"> 離焦眼鏡</label>
+                <label><input type="checkbox" id="itemSoft_${i}" ${isChecked("離焦日拋")} onchange="autoSettingsChanged = true;"> 離焦日拋</label>
+              </div>
+            </div>
+            <div style="margin-bottom: 12px;">
+              <label style="font-weight:bold; font-size:12px;">觸發條件 (勾選之條件須同時達成)：</label>
+              ${condRow("NoVisit", "未回診天數", cNoVisit)}
+              ${condRow("UsageAny", "任一眼使用天數", cUsageAny)}
+            </div>
+            <div style="margin-bottom: 12px;">
+              <label style="font-weight:bold; font-size:12px;">指定發送範本：</label>
+              <select id="autoTpl_${i}" onchange="autoSettingsChanged = true;">${tplOptions}</select>
+            </div>
+          </div>
+        `;
+      });
+
+      container.innerHTML = panesHtml;
+      document.getElementById("pane_0").innerHTML = overviewHtml;
+      
+      currentAutoConfigs.forEach((conf, i) => { 
+        const tplEl = document.getElementById(`autoTpl_${i}`);
+        if (tplEl) tplEl.value = conf.templateName || ""; 
+      });
+      autoSettingsChanged = false;
+    }
+
+    function switchAutoTab(idx) {
+      currentActiveTabIdx = idx;
+      document.querySelectorAll('.auto-sidebar .auto-tab').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('#autoPanesContainer .auto-pane').forEach(el => el.classList.remove('active'));
+      
+      const tabEl = document.getElementById('tab_' + idx);
+      const paneEl = document.getElementById('pane_' + idx);
+      if (tabEl) tabEl.classList.add('active');
+      if (paneEl) paneEl.classList.add('active');
+    }
+
+    function updateSidebarName(idx, val) {
+      const safeName = val || "設定" + idx;
+      const tabNameEl = document.getElementById("tabName_" + idx);
+      const overview = document.getElementById("overviewName_" + idx);
+      if (tabNameEl) tabNameEl.innerText = safeName;
+      if (overview) overview.innerText = safeName;
+    }
+
+    function updateSidebarIcon(idx, val, selectEl) {
+      const tabIconEl = document.getElementById("tabIcon_" + idx);
+      if (tabIconEl) tabIconEl.innerText = (val === "true" ? "[開]" : "[關]");
+      selectEl.style.color = val === "true" ? "#27ae60" : "#555";
+      document.getElementById("overviewName_" + idx).style.color = val === "true" ? "#27ae60" : "#7f8c8d";
+    }
+
+    async function saveAutoSettings() {
+      let newConfigs = [];
+      for(let i=0; i<10; i++) {
+        const isEnabled = document.getElementById(`autoEnable_${i}`).value === "true";
+        const name = document.getElementById(`autoName_${i}`).value || "設定" + (i+1);
+        const tplName = document.getElementById(`autoTpl_${i}`).value;
+
+        let items = [];
+        if(document.getElementById(`itemOk_${i}`).checked) items.push("塑型片");
+        if(document.getElementById(`itemGlass_${i}`).checked) items.push("離焦眼鏡");
+        if(document.getElementById(`itemSoft_${i}`).checked) items.push("離焦日拋");
+
+        const getCond = (key) => ({
+          active: document.getElementById(`condActive_${key}_${i}`).checked,
+          op: document.getElementById(`condOp_${key}_${i}`).value,
+          days: document.getElementById(`condDays_${key}_${i}`).value
+        });
+
+        const condNoVisit = getCond("NoVisit");
+        const condUsageAny = getCond("UsageAny");
+
+        if (isEnabled) {
+          if (items.length === 0) return alert(`「${name}」啟用中，必須至少勾選一種發送品項！`);
+          if (!condNoVisit.active && !condUsageAny.active) return alert(`「${name}」啟用中，必須至少打勾一個觸發條件！`);
+          if (!tplName) return alert(`「${name}」啟用中，必須選擇發送範本！`);
+        }
+
+        newConfigs.push({
+          id: i+1, enabled: isEnabled, name: name,
+          items: items, condNoVisit: condNoVisit, condUsageAny: condUsageAny,
+          templateName: tplName
+        });
+      }
+
+      try {
+        await supabaseClient
+          .from('system_settings')
+          .upsert({ id: 'auto_push_configs', data: newConfigs, updated_at: new Date().toISOString() });
+
+        currentAutoConfigs = newConfigs;
+        alert("自動化設定已成功儲存至雲端！");
+        openAutoModal(true);
+        await loadAutoConfigFromCloud();
+      } catch (err) {
+        alert("儲存失敗: " + err.message);
+      }
+    }
+
+    function closeAutoModal() {
+      if (autoSettingsChanged) {
+        if (!confirm("您有尚未儲存的設定變更，確定要放棄更動並離開嗎？")) return;
+      }
+      document.getElementById("overlay").style.display = "none";
+      document.getElementById("autoModal").style.display = "none";
+      autoSettingsChanged = false;
+    }
+
+    // ==========================================
+    // 自動化一鍵掃描與發送核心邏輯
+    // ==========================================
+    
+
+    function populateProductFilter() {
+      const sel = document.getElementById("filterProduct");
+      const prods = [...new Set(rawClients.map(c => c.product).filter(Boolean))];
+      sel.innerHTML = '<option value="">-- 所有商品 --</option>';
+      prods.forEach(p => { sel.innerHTML += `<option value="${p}">${p}</option>`; });
+    }
+
+    function renderTable() {
+      const tbody = document.querySelector("#dataTable tbody");
+      tbody.innerHTML = "";
+
+      rawClients.forEach((client, index) => {
+        let uids = client.line_uids || [];
+        if (typeof uids === 'string') {
+          uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+        }
+        const uidCount = Array.isArray(uids) ? uids.length : 0;
+
+        const tr = document.createElement("tr");
+        tr.dataset.index = index;
+        tr.innerHTML = `
+          <td><input type="checkbox" class="u-check" data-idx="${index}" onchange="updateChecked()" ${uidCount === 0 ? 'disabled' : ''}></td>
+          <td><strong>${client.name}</strong><br><span style="font-size:11px;color:#7f8c8d;">${client.code}</span></td>
+          <td>${client.phone || '-'}</td>
+          <td><span class="status-badge">${client.product || '未分類'}</span></td>
+          <td>${client.overdueDays || '0'} 天</td>
+          <td style="font-size:12px;">OD: ${client.odDuration || '-'}<br>OS: ${client.osDuration || '-'}</td>
+          <td>${uidCount > 0 ? `<span style="color:#16a34a; font-weight:bold;">已綁定 (${uidCount})</span>` : `<span style="color:#94a3b8;">未綁定</span>`}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+      filterTable();
+    }
+
+    function filterTable() {
+      const keyword = document.getElementById("searchInput").value.toLowerCase().trim();
+      const filterProd = document.getElementById("filterProduct").value;
+      const visitMin = parseInt(document.getElementById("filterVisitMin").value, 10);
+      const visitMax = parseInt(document.getElementById("filterVisitMax").value, 10);
+      const usageMin = parseInt(document.getElementById("filterUsageMin").value, 10);
+      const usageMax = parseInt(document.getElementById("filterUsageMax").value, 10);
+      const lineStatus = document.getElementById("filterLineStatus").value;
+
+      const rows = document.querySelectorAll("#dataTable tbody tr");
+      rows.forEach(row => {
+        const client = rawClients[row.dataset.index];
+        if (!client) return;
+
+        let uids = client.line_uids || [];
+        if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+        const uidCount = Array.isArray(uids) ? uids.length : 0;
+
+        if (lineStatus === 'bound' && uidCount === 0) {
+          row.style.display = "none";
+          row.querySelector('.u-check').checked = false;
+          return;
+        }
+
+        const matchKeyword = (client.name || '').toLowerCase().includes(keyword) || (client.code || '').toLowerCase().includes(keyword) || (client.phone || '').includes(keyword);
+        const matchProd = filterProd === "" || client.product === filterProd;
+
+        const overdue = parseInt(client.overdueDays, 10) || 0;
+        let matchVisit = true;
+        if (!isNaN(visitMin) && overdue < visitMin) matchVisit = false;
+        if (!isNaN(visitMax) && overdue > visitMax) matchVisit = false;
+
+        const odDays = parseInt(client.odAccumDays, 10) || 0;
+        const osDays = parseInt(client.osAccumDays, 10) || 0;
+        const maxUsage = Math.max(odDays, osDays);
+        let matchUsage = true;
+        if (!isNaN(usageMin) && maxUsage < usageMin) matchUsage = false;
+        if (!isNaN(usageMax) && maxUsage > usageMax) matchUsage = false;
+
+        if (matchKeyword && matchProd && matchVisit && matchUsage) {
+          row.style.display = "";
+        } else {
+          row.style.display = "none";
+          row.querySelector('.u-check').checked = false;
+        }
+      });
+      updateChecked();
+    }
+
+    function toggleAll() {
+      const isChecked = document.getElementById("checkAll").checked;
+      document.querySelectorAll("#dataTable tbody tr:not([style*='display: none']) .u-check:not(:disabled)").forEach(cb => cb.checked = isChecked);
+      updateChecked();
+    }
+
+    function updateChecked() {
+      document.getElementById("selectedCount").innerText = document.querySelectorAll('.u-check:checked').length;
+      updatePreview();
+    }
+
+    // 商品對外名稱對照表快取 (格式: { "BF": "角膜塑型片 (Befree旗艦款)", "二代": "角膜塑型片 (二代)" })
+    let productDisplayMap = {};
+
+    // 1. 從 Supabase 讀取商品名稱對照設定
+    async function loadProductMappingFromCloud() {
+      try {
+        const { data } = await supabaseClient
+          .from('system_settings')
+          .select('data')
+          .eq('id', 'product_display_mapping')
+          .maybeSingle();
+
+        if (data && data.data) {
+          productDisplayMap = data.data;
+        }
+      } catch (e) {
+        console.warn("讀取商品對照表失敗:", e);
+      }
+    }
+
+    // 2. 取得對外顯示名稱輔助函式
+    function getCustomerFacingProductName(internalProduct) {
+      if (!internalProduct) return "";
+      const trimmed = internalProduct.trim();
+      return productDisplayMap[trimmed] || trimmed;
+    }
+
+    // 3. 開啟商品名稱對照彈窗並自動撈出資料庫所有商品
+    async function openProductMappingModal() {
+      await loadProductMappingFromCloud();
+      
+      // 自動從目前客戶名單中撈取所有不重複的商品代號
+      const allInternalProducts = [...new Set(rawClients.map(c => (c.product || '').trim()).filter(Boolean))];
+      
+      // 合併之前已設定但名單目前剛好沒人的代號
+      Object.keys(productDisplayMap).forEach(key => {
+        if (!allInternalProducts.includes(key)) {
+          allInternalProducts.push(key);
+        }
+      });
+
+      const tbody = document.getElementById("productMappingTableBody");
+      tbody.innerHTML = "";
+
+      if (allInternalProducts.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="2" style="text-align:center; padding:15px; color:#888;">資料庫內目前無任何商品紀錄</td></tr>`;
+      } else {
+        allInternalProducts.forEach(internalCode => {
+          const displayVal = productDisplayMap[internalCode] || "";
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td style="font-weight:bold; color:#1e3a8a; background:#f8fafc;">${internalCode}</td>
+            <td>
+              <input type="text" class="prod-mapping-input" data-internal="${internalCode}" 
+                value="${displayVal}" placeholder="例：角膜塑型片 (若空白則顯示原代號)" style="margin:0; padding:4px 8px; font-size:12.5px;">
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      document.getElementById("overlay").style.display = "block";
+      document.getElementById("productMappingModal").style.display = "flex";
+    }
+
+    // 4. 儲存商品對照設定至 Supabase
+    async function saveProductMapping() {
+      const inputs = document.querySelectorAll(".prod-mapping-input");
+      const newMap = {};
+
+      inputs.forEach(inp => {
+        const internal = inp.getAttribute("data-idx") || inp.dataset.internal;
+        const display = inp.value.trim();
+        if (internal) {
+          newMap[internal] = display;
+        }
+      });
+
+      try {
+        await supabaseClient
+          .from('system_settings')
+          .upsert({ id: 'product_display_mapping', data: newMap, updated_at: new Date().toISOString() });
+
+        productDisplayMap = newMap;
+        alert("商品對外名稱對照設定已成功儲存至雲端！");
+        closeModal('productMappingModal');
+        updatePreview(); // 即時更新左側預覽
+      } catch (err) {
+        alert("儲存失敗: " + err.message);
+      }
+    }
+
+    // 5. 升級版訊息解析函式 (自動將內部商品轉為對外顯示名稱)
+    function parseMessage(template, client) {
+      if (!template || !client) return template;
+      
+      const formatD = (d) => {
+        const v = parseInt(d, 10);
+        if (isNaN(v) || v <= 0) return "0個月";
+        const y = Math.floor(v / 365);
+        const m = Math.floor((v % 365) / 30);
+        return (y > 0 ? `${y}年` : "") + (m > 0 || y === 0 ? `${m}個月` : "");
+      };
+
+      // 取得客人看得懂的對外品項名稱
+      const publicProductName = getCustomerFacingProductName(client.product);
+
+      return template
+        .replace(/{姓名}/g, client.name || '')
+        .replace(/{品項}/g, publicProductName)
+        .replace(/{商品}/g, publicProductName)
+        .replace(/{多久沒回}/g, client.overdueDays || '0')
+        .replace(/{OD用多久}/g, client.odDuration || formatD(client.odAccumDays))
+        .replace(/{OS用多久}/g, client.osDuration || formatD(client.osAccumDays));
+    }
+
+    function updatePreview() {
+      const tpl = document.getElementById("tplContent").value;
+      const checkedBoxes = document.querySelectorAll('.u-check:checked');
+      if (checkedBoxes.length > 0) {
+        const firstClient = rawClients[checkedBoxes[0].getAttribute("data-idx")];
+        document.getElementById("previewBox").innerText = parseMessage(tpl, firstClient);
+      } else {
+        document.getElementById("previewBox").innerText = tpl || "請先勾選右側名單，並撰寫範本...";
+      }
+    }
+
+    document.getElementById("tplContent").addEventListener('input', updatePreview);
+
+    function openSendModal() {
+      const checked = document.querySelectorAll('.u-check:checked');
+      if (checked.length === 0) return alert("請至少勾選一位發送對象！");
+      if (!document.getElementById("tplContent").value.trim()) return alert("訊息內容不能為空！");
+
+      document.getElementById("modalCount").innerText = checked.length;
+      document.getElementById("authPwd").value = "";
+      document.getElementById("overlay").style.display = "block";
+      document.getElementById("sendModal").style.display = "block";
+    }
+
+    function openSettingsModal() {
+      document.getElementById('settingLineToken').value = systemConfig.lineToken || "";
+      document.getElementById('settingAuthPassword').value = systemConfig.authPassword || "1234";
+      document.getElementById("overlay").style.display = "block";
+      document.getElementById("settingsModal").style.display = "block";
+    }
+
+    async function openHistoryModal() {
+      document.getElementById("overlay").style.display = "block";
+      document.getElementById("historyModal").style.display = "flex";
+      
+      const tbody = document.getElementById("historyTableBody");
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px;">載入紀錄中...</td></tr>';
+
+      try {
+        const { data, error } = await supabaseClient
+          .from('push_history')
+          .select('*')
+          .order('sent_at', { ascending: false })
+          .limit(100);
+
+        if (!error && data) {
+          if (data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px; color:#888;">暫無發送紀錄</td></tr>';
+            return;
+          }
+          tbody.innerHTML = '';
+          data.forEach(h => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>${new Date(h.sent_at).toLocaleString('zh-TW', { hour12: false })}</td>
+              <td><b>${h.client_name}</b> (${h.client_code})</td>
+              <td>${h.phone || '-'}</td>
+              <td>${h.template_name || '-'}</td>
+              <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${h.message_content}">${h.message_content}</td>
+              <td><span style="color:#16a34a; font-weight:bold;">成功</span></td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">讀取失敗</td></tr>';
+      }
+    }
+
+    function closeModal(modalId) {
+      document.getElementById("overlay").style.display = "none";
+      document.getElementById(modalId).style.display = "none";
+    }
+
+    // 貼上剛剛部署好的 GAS Web App 網址
+    const LINE_PROXY_URL = "https://script.google.com/macros/s/AKfycbwl56sS24-3zGUgqKEoHmsfuG48tIM_7j3nrwsZOY2FxOmogbkD28YJ2S2Wp3HQF4ws/exec";
+
+    async function executeSend() {
+      const pwd = document.getElementById("authPwd").value.trim();
+      if (pwd !== systemConfig.authPassword) {
+        return alert("授權密碼錯誤！無法執行發送。");
+      }
+      if (!systemConfig.lineToken) {
+        return alert("尚未設定 LINE Channel Access Token，請至設定填寫！");
+      }
+
+      const tpl = document.getElementById("tplContent").value.trim();
+      const tplName = document.getElementById("tplName").value.trim() || "自訂訊息";
+      const checkedBoxes = document.querySelectorAll('.u-check:checked');
+
+      const sendBtn = document.getElementById("realSendBtn");
+      sendBtn.innerText = "發送中 (請勿關閉)...";
+      sendBtn.disabled = true;
+
+      let successCount = 0;
+      let failCount = 0;
+      let errorDetails = [];
+      const historyLogs = [];
+
+      for (let cb of checkedBoxes) {
+        const client = rawClients[cb.getAttribute("data-idx")];
+        const msgText = parseMessage(tpl, client);
+        let uids = client.line_uids || [];
+        if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+
+        for (let uid of uids) {
+          try {
+            // 直接透過 GAS 轉發至 LINE API (無 CORS 阻擋)
+            const resp = await fetch(LINE_PROXY_URL, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({
+                token: systemConfig.lineToken.trim(),
+                to: uid.trim(),
+                messages: [{ type: "text", text: msgText }]
+              })
+            });
+
+            const resJson = await resp.json();
+
+            if (resJson && (resJson.message || resJson.error)) {
+              failCount++;
+              errorDetails.push(`客戶【${client.name}】: ${resJson.message || resJson.error}`);
+            } else {
+              successCount++;
+              historyLogs.push({
+                client_code: client.code,
+                client_name: client.name,
+                phone: client.phone,
+                uid: uid,
+                template_name: tplName,
+                message_content: msgText,
+                status: 'success'
+              });
+            }
+
+          } catch (e) {
+            failCount++;
+            errorDetails.push(`客戶【${client.name}】發送失敗: ${e.message}`);
+          }
+        }
+      }
+
+      if (historyLogs.length > 0) {
+        await supabaseClient.from('push_history').insert(historyLogs);
+      }
+
+      sendBtn.innerText = "確認發送";
+      sendBtn.disabled = false;
+      closeModal('sendModal');
+
+      if (failCount > 0) {
+        alert(`發送回報：\n成功：${successCount} 則\n失敗：${failCount} 則\n\n失敗原因：\n${errorDetails.join('\n')}`);
+      } else {
+        alert(`全數發送成功！共送出 ${successCount} 則訊息。`);
+      }
+    }
+    // ==========================================
+    // LINE Flex Message 精緻氣泡卡片組裝引擎
+    // ==========================================
+    function buildLineFlexMessage(text) {
+      return {
+        "type": "flex",
+        "altText": "【非廣告】視光專業定期提醒",
+        "contents": {
+          "type": "bubble",
+          "size": "mega",
+          "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+              {
+                "type": "text",
+                "text": "溫馨提醒",
+                "weight": "bold",
+                "size": "lg",
+                "color": "#6e5c4f"
+              }
+            ],
+            "backgroundColor": "#ebd5c1",
+            "paddingTop": "15px",
+            "paddingBottom": "15px"
+          },
+          "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+              {
+                "type": "text",
+                "text": text,
+                "wrap": true,
+                "size": "md",
+                "color": "#4a4a4a"
+              }
+            ],
+            "backgroundColor": "#fdfcfb"
+          },
+          "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+              {
+                "type": "button",
+                "style": "primary",
+                "color": "#b8a598",
+                "action": {
+                  "type": "uri",
+                  "label": "查看配戴紀錄",
+                  "uri": "https://liff.line.me/2010318557-eSGyzNUX"
+                }
+              },
+              {
+                "type": "button",
+                "style": "link",
+                "color": "#b8a598",
+                "margin": "sm",
+                "action": {
+                  "type": "uri",
+                  "label": "預約診所回診",
+                  "uri": "https://line.me/R/ti/p/@rjm4151u#~"
+                }
+              }
+            ],
+            "backgroundColor": "#fdfcfb",
+            "paddingBottom": "20px"
+          }
+        }
+      };
+    }
+
+    // ==========================================
+    // 手動勾選群發 (送出精美 Flex 卡片)
+    // ==========================================
+    async function executeSend() {
+      const pwd = document.getElementById("authPwd").value.trim();
+      if (pwd !== systemConfig.authPassword) {
+        return alert("授權密碼錯誤！無法執行發送。");
+      }
+      if (!systemConfig.lineToken) {
+        return alert("尚未設定 LINE Channel Access Token，請至設定填寫！");
+      }
+
+      const tpl = document.getElementById("tplContent").value.trim();
+      const tplName = document.getElementById("tplName").value.trim() || "自訂訊息";
+      const checkedBoxes = document.querySelectorAll('.u-check:checked');
+
+      const sendBtn = document.getElementById("realSendBtn");
+      sendBtn.innerText = "發送中 (請勿關閉)...";
+      sendBtn.disabled = true;
+
+      let successCount = 0;
+      let failCount = 0;
+      let errorDetails = [];
+      const historyLogs = [];
+
+      for (let cb of checkedBoxes) {
+        const client = rawClients[cb.getAttribute("data-idx")];
+        const msgText = parseMessage(tpl, client);
+        const flexPayload = buildLineFlexMessage(msgText); // 組裝成原版 Flex 卡片
+
+        let uids = client.line_uids || [];
+        if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+
+        for (let uid of uids) {
+          try {
+            const resp = await fetch(LINE_PROXY_URL, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({
+                token: systemConfig.lineToken.trim(),
+                to: uid.trim(),
+                messages: [flexPayload]
+              })
+            });
+
+            const resJson = await resp.json();
+
+            if (resJson && (resJson.message || resJson.error)) {
+              failCount++;
+              errorDetails.push(`客戶【${client.name}】: ${resJson.message || resJson.error}`);
+            } else {
+              successCount++;
+              historyLogs.push({
+                client_code: client.code,
+                client_name: client.name,
+                phone: client.phone,
+                uid: uid,
+                template_name: tplName,
+                message_content: msgText,
+                status: 'success'
+              });
+            }
+
+          } catch (e) {
+            failCount++;
+            errorDetails.push(`客戶【${client.name}】發送失敗: ${e.message}`);
+          }
+        }
+      }
+
+      if (historyLogs.length > 0) {
+        await supabaseClient.from('push_history').insert(historyLogs);
+      }
+
+      sendBtn.innerText = "確認發送";
+      sendBtn.disabled = false;
+      closeModal('sendModal');
+
+      if (failCount > 0) {
+        alert(`發送回報：\n成功：${successCount} 則 (Flex 卡片)\n失敗：${failCount} 則\n\n失敗原因：\n${errorDetails.join('\n')}`);
+      } else {
+        alert(`全數發送成功！共送出 ${successCount} 則 Flex 互動卡片訊息。`);
+      }
+    }
+
+    // ==========================================
+    // 自動化規則掃描發送 (送出精美 Flex 卡片)
+    // ==========================================
+    async function runAutoInspection() {
+      if (!systemConfig.lineToken) return alert("尚未設定 LINE Channel Access Token！");
+      
+      const activeRules = currentAutoConfigs.filter(c => c.enabled);
+      if (activeRules.length === 0) return alert("目前沒有任何啟用的自動化規則！請先至「自動化設定」啟用。");
+
+      if (!confirm(`即將依據已啟用的 ${activeRules.length} 組規則進行全客戶掃描並執行推播，確定執行嗎？`)) return;
+
+      let matchedTasks = [];
+
+      rawClients.forEach(client => {
+        let uids = client.line_uids || [];
+        if (typeof uids === 'string') uids = uids.replace(/[\{\}\[\]"]/g, '').split(',').map(s => s.trim()).filter(Boolean);
+        if (uids.length === 0) return;
+
+        for (let rule of activeRules) {
+          const clientProd = client.product || '';
+          const matchItem = rule.items.some(item => clientProd.includes(item));
+          if (!matchItem) continue;
+
+          const overdue = parseInt(client.overdueDays, 10) || 0;
+          if (rule.condNoVisit.active && rule.condNoVisit.days) {
+            const limit = parseInt(rule.condNoVisit.days, 10);
+            if (rule.condNoVisit.op === ">=" && overdue < limit) continue;
+            if (rule.condNoVisit.op === "==" && overdue !== limit) continue;
+          }
+
+          const odDays = parseInt(client.odAccumDays, 10) || 0;
+          const osDays = parseInt(client.osAccumDays, 10) || 0;
+          const maxUsage = Math.max(odDays, osDays);
+          if (rule.condUsageAny.active && rule.condUsageAny.days) {
+            const limit = parseInt(rule.condUsageAny.days, 10);
+            if (rule.condUsageAny.op === ">=" && maxUsage < limit) continue;
+            if (rule.condUsageAny.op === "==" && maxUsage !== limit) continue;
+          }
+
+          const tplObj = templateList.find(t => t.name === rule.templateName);
+          if (!tplObj) continue;
+
+          const msgText = parseMessage(tplObj.content, client);
+          matchedTasks.push({
+            client: client,
+            uids: uids,
+            tplName: rule.templateName,
+            message: msgText
+          });
+          break;
+        }
+      });
+
+      if (matchedTasks.length === 0) {
+        return alert("掃描完成：目前無任何客戶符合啟用的自動化推播條件。");
+      }
+
+      if (!confirm(`掃描完畢！共符合 ${matchedTasks.length} 位客戶，是否立即送出 Flex 卡片推播？`)) return;
+
+      let successCount = 0;
+      let failCount = 0;
+      const historyLogs = [];
+
+      for (let task of matchedTasks) {
+        const flexPayload = buildLineFlexMessage(task.message);
+
+        for (let uid of task.uids) {
+          try {
+            const resp = await fetch(LINE_PROXY_URL, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({
+                token: systemConfig.lineToken.trim(),
+                to: uid.trim(),
+                messages: [flexPayload]
+              })
+            });
+
+            const resJson = await resp.json();
+
+            if (resJson && (resJson.message || resJson.error)) {
+              failCount++;
+            } else {
+              successCount++;
+              historyLogs.push({
+                client_code: task.client.code,
+                client_name: task.client.name,
+                phone: task.client.phone,
+                uid: uid,
+                template_name: task.tplName,
+                message_content: task.message,
+                status: 'success'
+              });
+            }
+          } catch (e) {
+            failCount++;
+          }
+        }
+      }
+
+      if (historyLogs.length > 0) {
+        await supabaseClient.from('push_history').insert(historyLogs);
+      }
+
+      alert(`自動化推播執行完成！\n成功發送：${successCount} 則 Flex 訊息\n失敗：${failCount} 則`);
+    }
+
+    document.addEventListener("DOMContentLoaded", loadData);
+  </script>
+</body>
+</html>
