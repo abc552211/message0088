@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LINE 訊息推播與自動化管理系統</title>
-  <!-- Supabase JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+ 
   <style>
     :root {
       --primary: #2c3e50;
@@ -346,24 +345,20 @@
   </div>
 
   <script>
-    const SUPABASE_URL = "https://wycoyydhcaeuabaelwdo.supabase.co";
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5Y295eWRoY2FldWFiYWVsd2RvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5MDk2MDUsImV4cCI6MjEwMzQ4NTYwNX0.fkTge9-CHTIIYhQOfMpEmkRM9vOleM6rGd-h4sYDzjw";
+    // ★ 安全防護：金鑰與敏感設定已由 Cloudflare Worker 接管，前端零曝光
+    const API_BASE_URL = "https://linemessage-security.abc552211.workers.dev";
     
-    let supabaseClient = null;
     let rawClients = [];
     let templateList = [];
     let currentAutoConfigs = [];
     let currentActiveTabIdx = 0;
     let autoSettingsChanged = false;
+    let productDisplayMap = {};
 
     let systemConfig = {
       lineToken: "v6pO2cph5h0LxPSCzMQIvir9gWoWIAyKJ0DJf5/v8v+9kWV7tmH14bq5PTC0CYoVNfzCdj/c1AQJKgzSSin69JVRUQbVCb/FjfCo9u69uXviPrKHfYaQNzFbWx1q/3Q85+rxIXyKa8uD7tF/MabuQQdB04t89/1O/w1cDnyilFU=",
       authPassword: "1234"
     };
-
-    if (window.supabase && window.supabase.createClient) {
-      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-    }
 
     // 初始化 10 組預設自動化配置
     function getDefaultAutoConfigs() {
@@ -387,20 +382,33 @@
       loader.style.display = "flex";
 
       try {
-        await loadProductMappingFromCloud();
-        await loadConfigFromCloud();
-        await loadTemplatesFromCloud();
-        await loadAutoConfigFromCloud();
+        const res = await fetch(`${API_BASE_URL}/api/init-push-data`);
+        if (!res.ok) throw new Error(`後端連線異常 (${res.status})`);
+        const data = await res.json();
 
-        const { data, error } = await supabaseClient
-          .from('customers')
-          .select('*');
+        productDisplayMap = data.productMapping || {};
+        if (data.systemConfig) systemConfig = { ...systemConfig, ...data.systemConfig };
+        templateList = data.templates || [];
+        renderTemplateSelector();
 
-        if (!error && data) {
-          rawClients = data.filter(c => c.overdueDays !== '停用' && c.fdModify !== '停用');
-          populateProductFilter();
-          renderTable();
+        if (data.autoConfigs && Array.isArray(data.autoConfigs)) {
+          currentAutoConfigs = data.autoConfigs;
+        } else {
+          currentAutoConfigs = getDefaultAutoConfigs();
         }
+
+        const badge = document.getElementById("autoBadge");
+        if (currentAutoConfigs.some(c => c.enabled)) {
+          badge.innerText = "運作中";
+          badge.style.background = "#27ae60";
+        } else {
+          badge.innerText = "未啟用";
+          badge.style.background = "#e74c3c";
+        }
+
+        rawClients = (data.customers || []).filter(c => c.overdueDays !== '停用' && c.fdModify !== '停用');
+        populateProductFilter();
+        renderTable();
       } catch (err) {
         alert("資料載入失敗: " + err.message);
       } finally {
@@ -430,9 +438,12 @@
       systemConfig.authPassword = pwd;
 
       try {
-        await supabaseClient
-          .from('system_settings')
-          .upsert({ id: 'line_push_config', data: systemConfig, updated_at: new Date().toISOString() });
+        const res = await fetch(`${API_BASE_URL}/api/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: 'line_push_config', data: systemConfig })
+        });
+        if (!res.ok) throw new Error("儲存失敗");
         alert("設定儲存成功！");
         closeModal('settingsModal');
       } catch (err) {
@@ -515,11 +526,14 @@
       if (!name) return alert("請輸入範本名稱！");
 
       try {
-        await supabaseClient
-          .from('message_templates')
-          .upsert({ name: name, content: content, updated_at: new Date().toISOString() }, { onConflict: 'name' });
+        const res = await fetch(`${API_BASE_URL}/api/templates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, content: content, updated_at: new Date().toISOString() })
+        });
+        if (!res.ok) throw new Error("儲存失敗");
         alert("範本儲存成功！");
-        await loadTemplatesFromCloud();
+        loadData();
       } catch (err) {
         alert("儲存失敗: " + err.message);
       }
@@ -531,14 +545,14 @@
       if (!confirm(`確定要刪除範本【${name}】嗎？`)) return;
 
       try {
-        await supabaseClient
-          .from('message_templates')
-          .delete()
-          .eq('name', name);
+        const res = await fetch(`${API_BASE_URL}/api/template/${encodeURIComponent(name)}`, {
+          method: 'DELETE'
+        });
+        if (!res.ok) throw new Error("刪除失敗");
         alert("範本已刪除！");
         document.getElementById("tplName").value = "";
         document.getElementById("tplContent").value = "";
-        await loadTemplatesFromCloud();
+        loadData();
       } catch (err) {
         alert("刪除失敗: " + err.message);
       }
@@ -718,14 +732,16 @@
       }
 
       try {
-        await supabaseClient
-          .from('system_settings')
-          .upsert({ id: 'auto_push_configs', data: newConfigs, updated_at: new Date().toISOString() });
+        const res = await fetch(`${API_BASE_URL}/api/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: 'auto_push_configs', data: newConfigs })
+        });
+        if (!res.ok) throw new Error("儲存失敗");
 
         currentAutoConfigs = newConfigs;
         alert("自動化設定已成功儲存至雲端！");
         openAutoModal(true);
-        await loadAutoConfigFromCloud();
       } catch (err) {
         alert("儲存失敗: " + err.message);
       }
@@ -860,8 +876,7 @@
       updatePreview();
     }
 
-    // 商品對外名稱對照表快取 (格式: { "BF": "角膜塑型片 (Befree旗艦款)", "二代": "角膜塑型片 (二代)" })
-    let productDisplayMap = {};
+    
 
     // 1. 從 Supabase 讀取商品名稱對照設定
     async function loadProductMappingFromCloud() {
@@ -939,14 +954,17 @@
       });
 
       try {
-        await supabaseClient
-          .from('system_settings')
-          .upsert({ id: 'product_display_mapping', data: newMap, updated_at: new Date().toISOString() });
+        const res = await fetch(`${API_BASE_URL}/api/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: 'product_display_mapping', data: newMap })
+        });
+        if (!res.ok) throw new Error("儲存失敗");
 
         productDisplayMap = newMap;
         alert("商品對外名稱對照設定已成功儲存至雲端！");
         closeModal('productMappingModal');
-        updatePreview(); // 即時更新左側預覽
+        updatePreview();
       } catch (err) {
         alert("儲存失敗: " + err.message);
       }
@@ -1057,13 +1075,10 @@
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px;">載入紀錄中...</td></tr>';
 
       try {
-        const { data, error } = await supabaseClient
-          .from('push_history')
-          .select('*')
-          .order('sent_at', { ascending: false })
-          .limit(100);
+        const res = await fetch(`${API_BASE_URL}/api/push-history`);
+        const data = await res.json();
 
-        if (!error && data) {
+        if (Array.isArray(data)) {
           if (data.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px; color:#888;">暫無發送紀錄</td></tr>';
             return;
@@ -1255,24 +1270,29 @@
       // 1. 寫入發送歷史紀錄
       if (historyLogs.length > 0) {
         try {
-          await supabaseClient.from('push_history').insert(historyLogs);
+          await fetch(`${API_BASE_URL}/api/push-history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(historyLogs)
+          });
         } catch (e) {
           console.warn("寫入 push_history 失敗:", e);
         }
       }
 
       // 2. ★ 精準更新 customers 表的 contactDate 欄位
+      // 2. ★ 精準更新 customers 表的 contactDate 欄位
       const codeList = Array.from(successClientCodes);
       if (codeList.length > 0) {
         try {
-          const { error } = await supabaseClient
-            .from('customers')
-            .update({ contactDate: todayStr })
-            .in('code', codeList);
+          const cRes = await fetch(`${API_BASE_URL}/api/customers/contact-date`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ codes: codeList, contactDate: todayStr })
+          });
 
-          if (error) {
-            console.error("Supabase 更新 contactDate 失敗:", error);
-            alert("聯絡日寫入雲端失敗: " + error.message);
+          if (!cRes.ok) {
+            alert("聯絡日寫入雲端失敗");
           } else {
             // 同步更新發送頁本地名單
             rawClients.forEach(c => {
