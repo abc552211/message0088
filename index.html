@@ -970,28 +970,87 @@
       }
     }
 
-    // 5. 升級版訊息解析函式 (自動將內部商品轉為對外顯示名稱)
+    // 5. 升級版訊息解析函式 (自動將內部商品轉為對外顯示名稱，且使用時間採超整月1天無條件進位)
     function parseMessage(template, client) {
       if (!template || !client) return template;
       
-      const formatD = (d) => {
-        const v = parseInt(d, 10);
-        if (isNaN(v) || v <= 0) return "0個月";
-        const y = Math.floor(v / 365);
-        const m = Math.floor((v % 365) / 30);
-        return (y > 0 ? `${y}年` : "") + (m > 0 || y === 0 ? `${m}個月` : "");
+      const calcCeilDurationText = (dateStr, fallbackDur) => {
+        if (dateStr && dateStr !== "-") {
+          const cleanDate = String(dateStr).replace(/[^0-9]/g, '');
+          let startYear, startMonth, startDay;
+
+          if (cleanDate.length === 8) {
+            startYear = parseInt(cleanDate.substring(0, 4), 10);
+            startMonth = parseInt(cleanDate.substring(4, 6), 10);
+            startDay = parseInt(cleanDate.substring(6, 8), 10);
+          } else if (cleanDate.length === 7) {
+            startYear = parseInt(cleanDate.substring(0, 3), 10) + 1911;
+            startMonth = parseInt(cleanDate.substring(3, 5), 10);
+            startDay = parseInt(cleanDate.substring(5, 7), 10);
+          }
+
+          if (startYear && startMonth && startDay) {
+            const now = new Date();
+            const twNow = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
+            const curYear = twNow.getFullYear();
+            const curMonth = twNow.getMonth() + 1;
+            const curDay = twNow.getDate();
+
+            let yDiff = curYear - startYear;
+            let mDiff = curMonth - startMonth;
+            let dDiff = curDay - startDay;
+
+            if (dDiff < 0) {
+              mDiff -= 1;
+              const prevMonthDays = new Date(curYear, curMonth - 1, 0).getDate();
+              dDiff += prevMonthDays;
+            }
+
+            if (mDiff < 0) {
+              yDiff -= 1;
+              mDiff += 12;
+            }
+
+            // 只要超過整月 1 天，月份即無條件進位
+            if (dDiff > 0) {
+              mDiff += 1;
+              if (mDiff >= 12) {
+                yDiff += 1;
+                mDiff = 0;
+              }
+            }
+
+            if (yDiff >= 0 && mDiff >= 0) {
+              return `${yDiff}y-${mDiff}m`;
+            }
+          }
+        }
+
+        // 若無日期資料，由原始字串無條件進位
+        if (!fallbackDur || fallbackDur === "-") return "-";
+        const mMatch = String(fallbackDur).match(/(?:(\d+)\s*y\s*[-–]?\s*)?([0-9.]+)\s*m/i);
+        if (!mMatch) return fallbackDur;
+        let years = mMatch[1] ? parseInt(mMatch[1], 10) : 0;
+        let months = Math.ceil(parseFloat(mMatch[2]));
+        if (months >= 12) {
+          years += Math.floor(months / 12);
+          months = months % 12;
+        }
+        return (mMatch[1] !== undefined || years > 0) ? `${years}y-${months}m` : `${months}m`;
       };
 
       // 取得客人看得懂的對外品項名稱
       const publicProductName = getCustomerFacingProductName(client.product);
+      const odUsageText = calcCeilDurationText(client.odChangeDate, client.odDuration);
+      const osUsageText = calcCeilDurationText(client.osChangeDate, client.osDuration);
 
       return template
         .replace(/{姓名}/g, client.name || '')
         .replace(/{品項}/g, publicProductName)
         .replace(/{商品}/g, publicProductName)
         .replace(/{多久沒回}/g, client.overdueDays || '0')
-        .replace(/{OD用多久}/g, client.odDuration || formatD(client.odAccumDays))
-        .replace(/{OS用多久}/g, client.osDuration || formatD(client.osAccumDays));
+        .replace(/{OD用多久}/g, odUsageText)
+        .replace(/{OS用多久}/g, osUsageText);
     }
 
     function updatePreview() {
