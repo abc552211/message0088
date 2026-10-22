@@ -79,7 +79,33 @@
     .btn-cancel { background: #95a5a6; }
     .btn-confirm { background: var(--danger); }
     
-    #loader { display: flex; flex-direction: column; align-items: center; justify-content: center; position: absolute; inset: 0; background: rgba(255,255,255,0.9); z-index: 50; font-size: 16px; font-weight: bold; color: var(--primary); }
+    #loader { 
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: center; 
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100vw; 
+      height: 100vh; 
+      background: rgba(15, 23, 42, 0.65); 
+      backdrop-filter: blur(4px); 
+      z-index: 9999; 
+      font-size: 16px; 
+      font-weight: bold; 
+      color: #ffffff; 
+    }
+    .loader-spinner {
+      width: 44px;
+      height: 44px;
+      border: 4px solid rgba(255,255,255,0.25);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* 自動化 10 組分頁樣式 */
     .auto-sidebar { width: 150px; background: #f4f7f5; border-right: 1px solid #e1e8e2; overflow-y: auto; }
@@ -208,7 +234,8 @@
       
       <div class="table-container">
         <div id="loader">
-          <span>讀取客戶與範本資料中...</span>
+          <div class="loader-spinner"></div>
+          <span>資料讀取中，請稍候...</span>
         </div>
         <table id="dataTable">
           <thead>
@@ -297,8 +324,23 @@
   </div>
 
   <!-- 4. 發送歷史紀錄彈窗 -->
-  <div class="modal" id="historyModal" style="display: none; width: 750px; max-height: 80vh; flex-direction: column;">
-    <h3 style="color: var(--primary); margin-bottom: 10px;">LINE 推播歷史紀錄</h3>
+  <div class="modal" id="historyModal" style="display: none; width: 850px; max-width: 95vw; max-height: 85vh; flex-direction: column;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <h3 style="color: var(--primary); margin: 0;">LINE 推播歷史紀錄</h3>
+      <button class="btn btn-refresh" style="background: #27ae60; padding: 6px 12px; font-size: 12px;" onclick="exportHistoryCSV()">匯出 CSV</button>
+    </div>
+    
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; background: #f8f9fa; padding: 8px; border-radius: 4px; border: 1px solid #e1e8ed; margin-bottom: 10px;">
+      <input type="text" id="historySearchInput" placeholder="搜尋客戶、電話或範本..." oninput="filterHistoryTable()" style="flex: 2; min-width: 180px; margin: 0; padding: 5px;">
+      <div style="display: flex; align-items: center; gap: 4px; flex: 2; min-width: 240px;">
+        <span style="font-size: 12px; font-weight: bold; white-space: nowrap;">發送日期:</span>
+        <input type="date" id="historyStartDate" onchange="filterHistoryTable()" style="margin: 0; padding: 4px;">
+        <span>~</span>
+        <input type="date" id="historyEndDate" onchange="filterHistoryTable()" style="margin: 0; padding: 4px;">
+      </div>
+      <button class="btn btn-cancel" style="padding: 4px 10px; font-size: 12px;" onclick="resetHistoryFilters()">重設篩選</button>
+    </div>
+
     <div class="table-container" style="max-height: 50vh; border: 1px solid #eee;">
       <table style="font-size: 12px;">
         <thead>
@@ -314,7 +356,8 @@
         <tbody id="historyTableBody"></tbody>
       </table>
     </div>
-    <div class="modal-footer">
+    <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+      <span style="font-size: 12px; color: #64748b;">顯示 <span id="historyMatchCount">0</span> 筆紀錄</span>
       <button class="btn btn-cancel" onclick="closeModal('historyModal')">關閉</button>
     </div>
   </div>
@@ -525,13 +568,28 @@
       const content = document.getElementById("tplContent").value.trim();
       if (!name) return alert("請輸入範本名稱！");
 
+      const idx = document.getElementById("templateSelector").value;
+      const payload = { 
+        name: name, 
+        content: content, 
+        updated_at: new Date().toISOString() 
+      };
+
+      // 若當前選中的範本原本已有 id，一併帶上以供資料庫精確更新
+      if (idx !== "" && templateList[idx] && templateList[idx].id) {
+        payload.id = templateList[idx].id;
+      }
+
       try {
         const res = await fetch(`${API_BASE_URL}/api/templates`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name, content: content, updated_at: new Date().toISOString() })
+          body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error("儲存失敗");
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || "儲存失敗");
+        }
         alert("範本儲存成功！");
         loadData();
       } catch (err) {
@@ -1126,6 +1184,8 @@
       document.getElementById("settingsModal").style.display = "block";
     }
 
+    let rawHistoryList = [];
+
     async function openHistoryModal() {
       document.getElementById("overlay").style.display = "block";
       document.getElementById("historyModal").style.display = "flex";
@@ -1138,27 +1198,120 @@
         const data = await res.json();
 
         if (Array.isArray(data)) {
-          if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px; color:#888;">暫無發送紀錄</td></tr>';
-            return;
-          }
-          tbody.innerHTML = '';
-          data.forEach(h => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-              <td>${new Date(h.sent_at).toLocaleString('zh-TW', { hour12: false })}</td>
-              <td><b>${h.client_name}</b> (${h.client_code})</td>
-              <td>${h.phone || '-'}</td>
-              <td>${h.template_name || '-'}</td>
-              <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${h.message_content}">${h.message_content}</td>
-              <td><span style="color:#16a34a; font-weight:bold;">成功</span></td>
-            `;
-            tbody.appendChild(tr);
-          });
+          rawHistoryList = data;
+          filterHistoryTable();
+        } else {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px; color:#888;">暫無發送紀錄</td></tr>';
         }
       } catch (err) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">讀取失敗</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">讀取失敗: ' + err.message + '</td></tr>';
       }
+    }
+
+    function filterHistoryTable() {
+      const tbody = document.getElementById("historyTableBody");
+      const keyword = (document.getElementById("historySearchInput")?.value || "").toLowerCase().trim();
+      const startVal = document.getElementById("historyStartDate")?.value;
+      const endVal = document.getElementById("historyEndDate")?.value;
+
+      const startTime = startVal ? new Date(`${startVal}T00:00:00`).getTime() : null;
+      const endTime = endVal ? new Date(`${endVal}T23:59:59`).getTime() : null;
+
+      const filtered = rawHistoryList.filter(h => {
+        const matchKw = !keyword || 
+          (h.client_name || '').toLowerCase().includes(keyword) ||
+          (h.client_code || '').toLowerCase().includes(keyword) ||
+          (h.phone || '').includes(keyword) ||
+          (h.template_name || '').toLowerCase().includes(keyword) ||
+          (h.message_content || '').toLowerCase().includes(keyword);
+
+        const logTime = new Date(h.sent_at).getTime();
+        const matchStart = !startTime || (logTime >= startTime);
+        const matchEnd = !endTime || (logTime <= endTime);
+
+        return matchKw && matchStart && matchEnd;
+      });
+
+      const countEl = document.getElementById("historyMatchCount");
+      if (countEl) countEl.innerText = filtered.length;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:15px; color:#888;">無符合條件的發送紀錄</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = '';
+      filtered.forEach(h => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${new Date(h.sent_at).toLocaleString('zh-TW', { hour12: false })}</td>
+          <td><b>${h.client_name}</b> (${h.client_code})</td>
+          <td>${h.phone || '-'}</td>
+          <td>${h.template_name || '-'}</td>
+          <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${h.message_content}">${h.message_content}</td>
+          <td><span style="color:#16a34a; font-weight:bold;">成功</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function resetHistoryFilters() {
+      if (document.getElementById("historySearchInput")) document.getElementById("historySearchInput").value = "";
+      if (document.getElementById("historyStartDate")) document.getElementById("historyStartDate").value = "";
+      if (document.getElementById("historyEndDate")) document.getElementById("historyEndDate").value = "";
+      filterHistoryTable();
+    }
+
+    function exportHistoryCSV() {
+      const keyword = (document.getElementById("historySearchInput")?.value || "").toLowerCase().trim();
+      const startVal = document.getElementById("historyStartDate")?.value;
+      const endVal = document.getElementById("historyEndDate")?.value;
+
+      const startTime = startVal ? new Date(`${startVal}T00:00:00`).getTime() : null;
+      const endTime = endVal ? new Date(`${endVal}T23:59:59`).getTime() : null;
+
+      const listToExport = rawHistoryList.filter(h => {
+        const matchKw = !keyword || 
+          (h.client_name || '').toLowerCase().includes(keyword) ||
+          (h.client_code || '').toLowerCase().includes(keyword) ||
+          (h.phone || '').includes(keyword) ||
+          (h.template_name || '').toLowerCase().includes(keyword) ||
+          (h.message_content || '').toLowerCase().includes(keyword);
+
+        const logTime = new Date(h.sent_at).getTime();
+        const matchStart = !startTime || (logTime >= startTime);
+        const matchEnd = !endTime || (logTime <= endTime);
+
+        return matchKw && matchStart && matchEnd;
+      });
+
+      if (listToExport.length === 0) return alert("目前篩選條件下無任何紀錄可匯出！");
+
+      const headers = ["發送時間", "客戶姓名", "客戶代號", "電話", "範本名稱", "訊息內容", "發送狀態"];
+      const escapeCSV = (val) => `"${String(val || '').replace(/"/g, '""')}"`;
+
+      const csvRows = [headers.join(",")];
+      listToExport.forEach(h => {
+        const timeStr = new Date(h.sent_at).toLocaleString('zh-TW', { hour12: false });
+        csvRows.push([
+          escapeCSV(timeStr),
+          escapeCSV(h.client_name),
+          escapeCSV(h.client_code),
+          escapeCSV(h.phone || ''),
+          escapeCSV(h.template_name || ''),
+          escapeCSV(h.message_content || ''),
+          escapeCSV('成功')
+        ].join(","));
+      });
+
+      const csvBlob = new Blob(["\uFEFF" + csvRows.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+      const downloadLink = document.createElement("a");
+      const url = URL.createObjectURL(csvBlob);
+      downloadLink.setAttribute("href", url);
+      downloadLink.setAttribute("download", `LINE推播紀錄_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
     }
 
     function closeModal(modalId) {
@@ -1506,31 +1659,38 @@
         }
       }
 
-      // 寫入發送歷史紀錄
+      // 寫入發送歷史紀錄（統一走安全後端 API）
       if (historyLogs.length > 0) {
         try {
-          await supabaseClient.from('push_history').insert(historyLogs);
+          await fetch(`${API_BASE_URL}/api/push-history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(historyLogs)
+          });
         } catch (e) {
           console.warn("寫入 push_history 失敗:", e);
         }
       }
 
-      // ★ 核心回寫：自動更新 customers.contactDate
+      // ★ 核心回寫：自動更新 customers.contactDate（統一走安全後端 API）
       const codeList = Array.from(successClientCodes);
       if (codeList.length > 0) {
         try {
-          await supabaseClient
-            .from('customers')
-            .update({ contactDate: todayStr })
-            .in('code', codeList);
-
-          rawClients.forEach(c => {
-            if (codeList.includes(c.code)) {
-              c.contactDate = todayStr;
-            }
+          const cRes = await fetch(`${API_BASE_URL}/api/customers/contact-date`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ codes: codeList, contactDate: todayStr })
           });
-          renderTable();
-          console.log(`已成功將 ${codeList.length} 位客戶之 contactDate 同步更新至雲端！`);
+
+          if (cRes.ok) {
+            rawClients.forEach(c => {
+              if (codeList.includes(c.code)) {
+                c.contactDate = todayStr;
+              }
+            });
+            renderTable();
+            console.log(`已成功將 ${codeList.length} 位客戶之 contactDate 同步更新至雲端！`);
+          }
         } catch (err) {
           console.warn("批次更新聯絡日失敗:", err);
         }
@@ -1539,7 +1699,25 @@
       alert(`🎉 自動化推播執行完成！\n成功發送：${successCount} 則 Flex 訊息\n失敗：${failCount} 則\n已將 ${codeList.length} 位客戶之「聯絡日」自動更新為 ${todayStr}！`);
     }
 
-    document.addEventListener("DOMContentLoaded", loadData);
+    // 開啟網頁自動檢測：若今日尚未執行自動化檢查，且有規則處於啟用狀態，則主動提示執行
+    async function checkDailyAutoRun() {
+      await loadData();
+      const activeRules = currentAutoConfigs.filter(c => c.enabled);
+      if (activeRules.length === 0) return;
+
+      const todayKey = `auto_run_date_${new Date().toISOString().slice(0, 10)}`;
+      const hasRunToday = localStorage.getItem(todayKey);
+
+      if (!hasRunToday) {
+        const shouldRun = confirm(`【每日自動提醒】\n系統偵測到有 ${activeRules.length} 組啟用中的自動化推播規則，今日尚未執行掃描。\n是否立即啟動全自動掃描推播？`);
+        if (shouldRun) {
+          localStorage.setItem(todayKey, "done");
+          runAutoInspection();
+        }
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", checkDailyAutoRun);
   </script>
 </body>
 </html>
