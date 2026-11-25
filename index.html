@@ -1981,26 +1981,8 @@
       alert(`🎉 自動化推播執行完成！\n成功發送：${successCount} 則 Flex 訊息\n失敗：${failCount} 則\n已將 ${codeList.length} 位客戶之「聯絡日」自動更新為 ${todayStr}！`);
     }
 
-    // 開啟網頁自動檢測：若今日尚未執行自動化檢查，且有規則啟用，自動在背景掃描並執行推播
-    async function checkDailyAutoRun() {
-      await loadData();
-      const activeRules = currentAutoConfigs.filter(c => c.enabled);
-      if (activeRules.length === 0) return;
-
-      // 使用台灣時間年月日作為每日檢查 key
-      const now = new Date();
-      const twDate = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
-      const todayKey = `auto_run_date_${twDate.toISOString().slice(0, 10)}`;
-      const hasRunToday = localStorage.getItem(todayKey);
-
-      if (!hasRunToday) {
-        console.log(`[每日自動化] 偵測到今日尚未執行，已啟用的規則數：${activeRules.length} 組，開始背景掃描...`);
-        localStorage.setItem(todayKey, "done");
-        await runAutoInspection(true); // 帶入 true 表示由系統排程自動執行，免跳二次 confirm
-      }
-    }
-
-    document.addEventListener("DOMContentLoaded", checkDailyAutoRun);
+    // 開啟網頁僅載入最新資料，每日自動掃描推播統一交由 Cloudflare Worker 排程執行
+    document.addEventListener("DOMContentLoaded", loadData);
   </script>
 </body>
 </html>
